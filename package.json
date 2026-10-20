@@ -4,6 +4,14 @@
   "description": "SysML v2 textual editing for VS Code: LSP client, diagnostics, outline, model explorer, structural graph and native AI assistance",
   "version": "0.1.0",
   "publisher": "sysml-vscode",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Giwi/sysml2-vscode-ext.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Giwi/sysml2-vscode-ext/issues"
+  },
+  "homepage": "https://github.com/Giwi/sysml2-vscode-ext#readme",
   "license": "GPL-3.0-or-later",
   "icon": "media/icon.png",
   "galleryBanner": {
