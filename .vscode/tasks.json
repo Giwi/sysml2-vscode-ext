@@ -1,0 +1,56 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "compile",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$esbuild"],
+      "label": "npm: compile",
+      "detail": "Bundle dist/extension.js and dist/server.js with esbuild"
+    },
+    {
+      "type": "npm",
+      "script": "watch",
+      "isBackground": true,
+      "group": "build",
+      "problemMatcher": [],
+      "label": "npm: watch",
+      "detail": "Rebuild the extension and server on change",
+      "presentation": {
+        "reveal": "silent",
+        "group": "watch"
+      }
+    },
+    {
+      "type": "npm",
+      "script": "generate",
+      "group": "build",
+      "problemMatcher": [],
+      "label": "npm: generate",
+      "detail": "Regenerate the ANTLR parser and lexer from grammar/*.g4"
+    },
+    {
+      "type": "npm",
+      "script": "typecheck",
+      "group": "test",
+      "problemMatcher": ["$tsc"],
+      "label": "npm: typecheck",
+      "detail": "Strict TypeScript check without emit"
+    },
+    {
+      "type": "npm",
+      "script": "test",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": [],
+      "label": "npm: test",
+      "detail": "Parse examples and the standard library, check cross-file resolution"
+    }
+  ]
+}

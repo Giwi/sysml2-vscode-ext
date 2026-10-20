@@ -1,0 +1,302 @@
+{
+  "name": "sysml-vscode",
+  "displayName": "SysML v2",
+  "description": "SysML v2 textual editing for VS Code: LSP client, diagnostics, outline, model explorer, structural graph and native AI assistance",
+  "version": "0.1.0",
+  "publisher": "sysml-vscode",
+  "license": "GPL-3.0-or-later",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1F4FD8",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Visualization",
+    "Modeling"
+  ],
+  "keywords": [
+    "sysml",
+    "sysmlv2",
+    "kerml",
+    "mbse",
+    "systems-engineering"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:sysml",
+    "onLanguage:kerml",
+    "onView:sysml.modelExplorer"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "sysml",
+        "aliases": [
+          "SysML v2",
+          "sysml"
+        ],
+        "extensions": [
+          ".sysml"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "kerml",
+        "aliases": [
+          "KerML",
+          "kerml"
+        ],
+        "extensions": [
+          ".kerml"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sysml",
+        "scopeName": "source.sysml",
+        "path": "./syntaxes/sysml.tmLanguage.json"
+      },
+      {
+        "language": "kerml",
+        "scopeName": "source.sysml",
+        "path": "./syntaxes/sysml.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "sysml",
+        "path": "./snippets/sysml.json"
+      },
+      {
+        "language": "kerml",
+        "path": "./snippets/sysml.json"
+      }
+    ],
+    "configuration": {
+      "title": "SysML v2",
+      "properties": {
+        "sysml.server.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a custom language server module. Leave empty to use the bundled server."
+        },
+        "sysml.library.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Index the bundled SysML/KerML normative standard library for cross-file resolution, hover and completion."
+        },
+        "sysml.validation.unresolvedReference": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report unresolved name references as warnings."
+        },
+        "sysml.graph.maxNodes": {
+          "type": "number",
+          "default": 300,
+          "description": "Maximum number of nodes rendered in the structure graph."
+        },
+        "sysml.ai.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the native AI assistant: inline edits, the SysML chat participant and diff previews."
+        },
+        "sysml.ai.model": {
+          "type": "string",
+          "default": "",
+          "description": "Preferred language model family or id (for example 'gpt-4o'). Leave empty to use the first available model."
+        },
+        "sysml.ai.maxContextChars": {
+          "type": "number",
+          "default": 12000,
+          "description": "Maximum number of characters of the active document sent to the model."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sysml",
+          "title": "SysML v2",
+          "icon": "./media/sysml-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "sysml": [
+        {
+          "id": "sysml.modelExplorer",
+          "name": "Model Explorer"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "sysml.refreshModelExplorer",
+        "title": "SysML: Refresh Model Explorer",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sysml.openGraphPanel",
+        "title": "SysML: Open Structure Graph Panel",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "sysml.refreshGraph",
+        "title": "SysML: Refresh Structure Graph"
+      },
+      {
+        "command": "sysml.exportGraph",
+        "title": "SysML: Export Structure Graph as DOT"
+      },
+      {
+        "command": "sysml.restartServer",
+        "title": "SysML: Restart Language Server"
+      },
+      {
+        "command": "sysml.ai.inlineAssist",
+        "title": "SysML: AI Edit Selection",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "sysml.ai.generate",
+        "title": "SysML: AI Generate Declaration",
+        "icon": "$(add)"
+      },
+      {
+        "command": "sysml.ai.explain",
+        "title": "SysML: AI Explain Model",
+        "icon": "$(book)"
+      },
+      {
+        "command": "sysml.ai.previewLast",
+        "title": "SysML: AI Preview Last Proposal"
+      },
+      {
+        "command": "sysml.ai.accept",
+        "title": "SysML: AI Accept Change"
+      },
+      {
+        "command": "sysml.ai.reject",
+        "title": "SysML: AI Reject Change"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "sysml.openGraphPanel",
+          "when": "resourceLangId == sysml || resourceLangId == kerml",
+          "group": "navigation"
+        },
+        {
+          "command": "sysml.ai.inlineAssist",
+          "when": "resourceLangId == sysml || resourceLangId == kerml",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "sysml.ai.inlineAssist",
+          "when": "editorLangId == sysml || editorLangId == kerml",
+          "group": "1_modification"
+        },
+        {
+          "command": "sysml.ai.generate",
+          "when": "editorLangId == sysml || editorLangId == kerml",
+          "group": "1_modification"
+        },
+        {
+          "command": "sysml.ai.explain",
+          "when": "editorLangId == sysml || editorLangId == kerml",
+          "group": "1_modification"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "sysml.ai.accept",
+          "when": "false"
+        },
+        {
+          "command": "sysml.ai.reject",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "sysml.refreshModelExplorer",
+          "when": "view == sysml.modelExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "sysml.openGraphPanel",
+          "when": "view == sysml.modelExplorer",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "sysml.ai.inlineAssist",
+        "key": "ctrl+alt+i",
+        "mac": "cmd+alt+i",
+        "when": "editorLangId == sysml || editorLangId == kerml"
+      },
+      {
+        "command": "sysml.ai.generate",
+        "key": "ctrl+alt+enter",
+        "mac": "cmd+alt+enter",
+        "when": "editorLangId == sysml || editorLangId == kerml"
+      },
+      {
+        "command": "sysml.ai.explain",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e",
+        "when": "editorLangId == sysml || editorLangId == kerml"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "sysml.assistant",
+        "name": "sysml",
+        "fullName": "SysML Assistant",
+        "description": "Ask about the active SysML or KerML model and propose changes as diffs",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "explain",
+            "description": "Explain the active model"
+          },
+          {
+            "name": "generate",
+            "description": "Generate a declaration at the cursor"
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "generate": "node scripts/generate-grammar.mjs",
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node esbuild.mjs --smoke && node dist/smoke.js && node dist/snippet-smoke.js",
+    "vscode:prepublish": "node esbuild.mjs --production"
+  },
+  "dependencies": {
+    "antlr4": "^4.13.2",
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.95.0",
+    "esbuild": "^0.21.0",
+    "typescript": "^5.5.0"
+  }
+}

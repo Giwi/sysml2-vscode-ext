@@ -1,0 +1,261 @@
+{
+  "Package": {
+    "prefix": "package",
+    "body": ["package ${1:Name} {", "\t$0", "}"],
+    "description": "SysML package"
+  },
+  "Library package": {
+    "prefix": "library package",
+    "body": ["library package ${1:Name} {", "\t$0", "}"],
+    "description": "SysML library package"
+  },
+  "Part definition": {
+    "prefix": "part def",
+    "body": ["part def ${1:Name} {", "\t$0", "}"],
+    "description": "Part definition"
+  },
+  "Part usage": {
+    "prefix": "part",
+    "body": ["part ${1:name} : ${2:Type};"],
+    "description": "Part usage typed by a part definition"
+  },
+  "Attribute definition": {
+    "prefix": "attribute def",
+    "body": ["attribute def ${1:Name} {", "\tattribute ${2:value} : ${3:ScalarValues::Real};", "}"],
+    "description": "Attribute definition"
+  },
+  "Attribute usage with value": {
+    "prefix": "attribute",
+    "body": ["attribute ${1:name} : ${2:ScalarValues::Real} = ${3:0.0};"],
+    "description": "Attribute usage with a default value"
+  },
+  "Item definition": {
+    "prefix": "item def",
+    "body": ["item def ${1:Name} {", "\t$0", "}"],
+    "description": "Item definition"
+  },
+  "Item usage": {
+    "prefix": "item",
+    "body": ["item ${1:name} : ${2:Type};"],
+    "description": "Item usage typed by an item definition"
+  },
+  "Port definition": {
+    "prefix": "port def",
+    "body": ["port def ${1:Name} {", "\t$0", "}"],
+    "description": "Port definition"
+  },
+  "Port usage": {
+    "prefix": "port",
+    "body": ["port ${1:name} : ${2:Type};"],
+    "description": "Port usage typed by a port definition"
+  },
+  "Connection": {
+    "prefix": "connect",
+    "body": ["connect ${1:source}.${2:srcPort} to ${3:target}.${4:dstPort};"],
+    "description": "Connection between two features"
+  },
+  "Interface definition": {
+    "prefix": "interface def",
+    "body": ["interface def ${1:Name} {", "\tend port ${2:source};", "\tend port ${3:target};", "}"],
+    "description": "Interface definition with two end ports"
+  },
+  "Flow": {
+    "prefix": "flow",
+    "body": ["flow ${1:source}.${2:outPort} to ${3:target}.${4:inPort};"],
+    "description": "Flow of items between two features"
+  },
+  "Action definition": {
+    "prefix": "action def",
+    "body": ["action def ${1:Name} {", "\tin item ${2:input} : ${3:Type};", "\t$0", "}"],
+    "description": "Action definition with an input item"
+  },
+  "Action usage": {
+    "prefix": "action",
+    "body": ["action ${1:name} : ${2:Type};"],
+    "description": "Action usage typed by an action definition"
+  },
+  "State definition": {
+    "prefix": "state def",
+    "body": [
+      "state def ${1:Name} {",
+      "\tentry; then ${2:idle};",
+      "\tstate ${2:idle};",
+      "\tstate ${3:active} {",
+      "\t\tdo action ${4:actionName};",
+      "\t}",
+      "\ttransition ${5:name}",
+      "\t\tfirst ${3:active}",
+      "\t\taccept ${6:triggerEvent} : ${7:EventType}",
+      "\t\tthen ${2:idle};",
+      "}"
+    ],
+    "description": "State definition with entry action, nested state and transition"
+  },
+  "Requirement definition": {
+    "prefix": "requirement def",
+    "body": [
+      "requirement def ${1:Name} {",
+      "\tattribute id : String = '${2:REQ-001}';",
+      "\tattribute text : String = '${3:The system shall ...}';",
+      "\t$0",
+      "}"
+    ],
+    "description": "Requirement definition with id and text"
+  },
+  "Requirement usage": {
+    "prefix": "requirement",
+    "body": [
+      "requirement ${1:name} : ${2:Type} {",
+      "\tattribute :>> id = '${3:REQ-002}';",
+      "\t$0",
+      "}"
+    ],
+    "description": "Requirement usage with a redefined id"
+  },
+  "Concern definition": {
+    "prefix": "concern def",
+    "body": ["concern def ${1:Name} {", "\tattribute text : String = '${2:concern}';", "\t$0", "}"],
+    "description": "Concern definition"
+  },
+  "Constraint definition": {
+    "prefix": "constraint def",
+    "body": [
+      "constraint def ${1:Name} {",
+      "\tattribute ${2:total} : ${3:ScalarValues::Real};",
+      "\tattribute ${4:parts} : ${3:ScalarValues::Real}[0..*];",
+      "",
+      "\t${2:total} == ${5:sum}(${4:parts})",
+      "}"
+    ],
+    "description": "Constraint definition with a constraint expression"
+  },
+  "Constraint expression": {
+    "prefix": "constraint",
+    "body": ["constraint { ${1:expression}; }"],
+    "description": "Inline constraint expression"
+  },
+  "Calculation definition": {
+    "prefix": "calc def",
+    "body": ["calc def ${1:Name} {", "\tin ${2:input} : ${3:ScalarValues::Real};", "\treturn : ${4:ScalarValues::Real};", "\treturn ${5:input};", "}"],
+    "description": "Calculation definition with input and return"
+  },
+  "Analysis case definition": {
+    "prefix": "analysis def",
+    "body": [
+      "analysis def ${1:Name} {",
+      "\tsubject ${2:analysisSubject} : ${3:SubjectType};",
+      "\tobjective {",
+      "\t\t${4:/* goal */}",
+      "\t}",
+      "}"
+    ],
+    "description": "Analysis case definition"
+  },
+  "Verification case definition": {
+    "prefix": "verification def",
+    "body": [
+      "verification def ${1:Name} {",
+      "\tsubject ${2:caseSubject} : ${3:SubjectType};",
+      "\tobjective {",
+      "\t\tverify ${4:requirementName};",
+      "\t}",
+      "}"
+    ],
+    "description": "Verification case definition"
+  },
+  "Use case definition": {
+    "prefix": "use case def",
+    "body": [
+      "use case def ${1:Name} {",
+      "\tsubject ${2:caseSubject} : ${3:SubjectType};",
+      "\tactor ${4:actorName} : ${5:ActorType};",
+      "\tobjective {",
+      "\t\t${6:/* goal */}",
+      "\t}",
+      "}"
+    ],
+    "description": "Use case definition"
+  },
+  "Satisfy requirement": {
+    "prefix": "satisfy",
+    "body": ["satisfy ${1:requirementName};"],
+    "description": "Satisfy requirement assertion"
+  },
+  "Allocation definition": {
+    "prefix": "allocation def",
+    "body": ["allocation def ${1:Name} {", "\tallocate ${2:source} to ${3:target};", "}"],
+    "description": "Allocation definition"
+  },
+  "View definition": {
+    "prefix": "view def",
+    "body": [
+      "view def ${1:Name} {",
+      "\tviewpoint ${2:vp} : ${3:ViewpointType} {",
+      "\t\tframe ${4:concernName};",
+      "\t}",
+      "\trender ${5:renderingName};",
+      "}"
+    ],
+    "description": "View definition with a viewpoint and rendering"
+  },
+  "Viewpoint definition": {
+    "prefix": "viewpoint def",
+    "body": ["viewpoint def ${1:Name} {", "\tframe ${2:concernName};", "}"],
+    "description": "Viewpoint definition framing a concern"
+  },
+  "Metadata definition": {
+    "prefix": "metadata def",
+    "body": ["metadata def ${1:Name} {", "\tattribute ${2:name} : String;", "}"],
+    "description": "Metadata definition"
+  },
+  "Enumeration definition": {
+    "prefix": "enum def",
+    "body": ["enum def ${1:Name} {", "\tenum ${2:value1};", "\tenum ${3:value2};", "}"],
+    "description": "Enumeration definition"
+  },
+  "Individual definition": {
+    "prefix": "individual def",
+    "body": ["individual def ${1:Name} :> ${2:Type} {", "\t$0", "}"],
+    "description": "Individual (instance) definition"
+  },
+  "Occurrence definition": {
+    "prefix": "occurrence def",
+    "body": ["occurrence def ${1:Name} {", "\t$0", "}"],
+    "description": "Occurrence definition"
+  },
+  "Import namespace": {
+    "prefix": "import",
+    "body": ["import ${1:Package}::*;"],
+    "description": "Namespace import (wildcard)"
+  },
+  "Import membership": {
+    "prefix": "import member",
+    "body": ["import ${1:Package}::${2:Element};"],
+    "description": "Membership import of a single element"
+  },
+  "Alias": {
+    "prefix": "alias",
+    "body": ["alias ${1:shortName} for ${2:Package}::${3:Element};"],
+    "description": "Alias for an element"
+  },
+  "Dependency": {
+    "prefix": "dependency",
+    "body": ["dependency from ${1:client} to ${2:supplier};"],
+    "description": "Dependency between elements"
+  },
+  "Comment": {
+    "prefix": "comment",
+    "body": ["comment about ${1:target} /* ${2:documentation} */"],
+    "description": "Comment about an element"
+  },
+  "Doc comment": {
+    "prefix": "doc",
+    "body": ["doc /* ${1:documentation} */"],
+    "description": "Documentation comment"
+  },
+  "Root model file": {
+    "prefix": "root",
+    "body": ["package ${1:ModelName} {", "\timport ScalarValues::*;", "", "\t$0", "}"],
+    "description": "Package skeleton importing ScalarValues"
+  }
+}

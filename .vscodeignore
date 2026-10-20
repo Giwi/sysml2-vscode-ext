@@ -1,0 +1,24 @@
+.vscode/**
+.gitignore
+esbuild.mjs
+tsconfig.json
+scripts/**
+grammar/**
+tools/**
+reference/**
+src/**
+
+# Everything is bundled into dist/, so runtime dependencies are not needed.
+node_modules/**
+
+# Source maps and test bundles must not ship.
+**/*.map
+dist/smoke.js
+dist/snippet-smoke.js
+
+# Editor-only copies of the standard library.
+library/**/*.kermlx
+library/**/*.sysmlx
+
+# The market icon source; the PNG is shipped instead.
+media/icon.svg

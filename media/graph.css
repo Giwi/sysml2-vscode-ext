@@ -1,0 +1,233 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: var(--vscode-font-family, system-ui, sans-serif);
+  font-size: 11px;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  color: var(--vscode-foreground, #ccc);
+}
+
+/* --- toolbar --- */
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, #333);
+}
+
+#status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground, #999);
+}
+
+#controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+#controls input,
+#controls select,
+#controls button {
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--vscode-input-foreground, #ccc);
+  background: var(--vscode-input-background, #3a3d41);
+  border: 1px solid var(--vscode-input-border, #444);
+  border-radius: 2px;
+  padding: 1px 6px;
+}
+
+#controls input {
+  width: 140px;
+}
+
+#controls button {
+  cursor: pointer;
+  min-width: 24px;
+}
+
+#controls button:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+/* --- diagram canvas --- */
+
+#body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+#graph {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  background: #1e1e1e;
+}
+
+#graph:active {
+  cursor: grabbing;
+}
+
+/* --- block definition diagram --- */
+
+text {
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  user-select: none;
+  pointer-events: none;
+}
+
+.stereo {
+  font-size: 9px;
+}
+
+.name {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.compartment {
+  font-size: 9px;
+  font-style: italic;
+}
+
+.row {
+  font-size: 10px;
+}
+
+.more {
+  font-style: italic;
+}
+
+.node {
+  cursor: pointer;
+}
+
+.node .block {
+  transition: stroke-width 80ms linear;
+}
+
+.node:hover .block {
+  stroke-width: 2;
+}
+
+.node.selected .block {
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+.node.dim {
+  opacity: 0.25;
+}
+
+.node.match .block {
+  stroke: #ffcc00;
+  stroke-width: 2.5;
+}
+
+.edge {
+  pointer-events: none;
+}
+
+/* --- details panel --- */
+
+#details {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  max-width: 260px;
+  padding: 6px 8px;
+  background: var(--vscode-editorWidget-background, #252526);
+  border: 1px solid var(--vscode-editorWidget-border, #454545);
+  border-radius: 3px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+#detailsHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#detailsName {
+  overflow-wrap: anywhere;
+}
+
+#detailsClose {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+#detailsKind {
+  color: var(--vscode-descriptionForeground, #999);
+  margin-top: 2px;
+}
+
+#detailsMeta {
+  color: var(--vscode-descriptionForeground, #999);
+  margin-top: 2px;
+}
+
+#detailsOpen {
+  margin-top: 6px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--vscode-button-foreground, #fff);
+  background: var(--vscode-button-background, #0e639c);
+  border: none;
+  border-radius: 2px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+#detailsOpen:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+/* --- legend --- */
+
+#legend {
+  flex: none;
+  padding: 3px 8px;
+  color: var(--vscode-descriptionForeground, #999);
+  border-top: 1px solid var(--vscode-panel-border, #333);
+}
+
+#legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin: 0 2px 0 8px;
+  vertical-align: middle;
+}
+
+#legend i:first-child {
+  margin-left: 0;
+}
