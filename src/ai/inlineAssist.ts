@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
+import type { LanguageClient } from 'vscode-languageclient/node';
 import { buildContext, replacementText, snapshotEditor, truncate } from './context';
 import { aiEnabled, complete, describeError, extractCode, pickModel } from './model';
 import { proposeEdit } from './editPreview';
+import { confirmProposalParses } from './validate';
 
 function maxChars(): number {
   return vscode.workspace.getConfiguration('sysml').get<number>('ai.maxContextChars', 12000);
@@ -13,7 +15,10 @@ function maxChars(): number {
  * `insert` appends new declarations at the cursor, `rewrite` replaces the
  * selection (or the whole document). Both end in a diff, never a direct edit.
  */
-async function runAssist(mode: 'insert' | 'rewrite'): Promise<void> {
+async function runAssist(
+  mode: 'insert' | 'rewrite',
+  getClient: () => LanguageClient | undefined
+): Promise<void> {
   if (!aiEnabled()) {
     void vscode.window.showInformationMessage(
       'SysML AI is disabled. Enable "sysml.ai.enable" in settings.'
@@ -69,15 +74,19 @@ async function runAssist(mode: 'insert' | 'rewrite'): Promise<void> {
           const indent = /^\s*/.exec(document.lineAt(snapshot.selection.active.line).text)?.[0] ?? '';
           const indented = code
             .split('\n')
-            .map((line, index) => (index === 0 ? indent + line : indent + line))
+            .map((line) => indent + line)
             .join('\n');
-          await proposeEdit(document, prefix + separator + indented + '\n' + suffix, 'SysML AI: proposed insertion');
+          const proposed = prefix + separator + indented + '\n' + suffix;
+          if (!(await confirmProposalParses(getClient, proposed))) {
+            return;
+          }
+          await proposeEdit(document, proposed, 'SysML AI: proposed insertion');
         } else {
-          await proposeEdit(
-            snapshot.document,
-            replacementText(snapshot, code),
-            'SysML AI: proposed change'
-          );
+          const proposed = replacementText(snapshot, code);
+          if (!(await confirmProposalParses(getClient, proposed))) {
+            return;
+          }
+          await proposeEdit(snapshot.document, proposed, 'SysML AI: proposed change');
         }
       }
     );
@@ -130,10 +139,13 @@ async function runExplain(): Promise<void> {
 }
 
 /** Register the AI commands and their keybindings. */
-export function registerInlineAssist(context: vscode.ExtensionContext): void {
+export function registerInlineAssist(
+  context: vscode.ExtensionContext,
+  getClient: () => LanguageClient | undefined
+): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('sysml.ai.inlineAssist', () => runAssist('rewrite')),
-    vscode.commands.registerCommand('sysml.ai.generate', () => runAssist('insert')),
+    vscode.commands.registerCommand('sysml.ai.inlineAssist', () => runAssist('rewrite', getClient)),
+    vscode.commands.registerCommand('sysml.ai.generate', () => runAssist('insert', getClient)),
     vscode.commands.registerCommand('sysml.ai.explain', () => runExplain())
   );
 }

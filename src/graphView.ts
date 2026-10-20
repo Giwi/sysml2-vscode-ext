@@ -258,7 +258,7 @@ export class GraphSession {
         <option value="">All kinds</option>
       </select>
       <select id="layout" title="Diagram layout">
-        <option value="tree">Tree (hierarchy)</option>
+        <option value="tree">Layered (hierarchy)</option>
         <option value="force">Force</option>
         <option value="circle">Circle</option>
         <option value="grid">Grid</option>

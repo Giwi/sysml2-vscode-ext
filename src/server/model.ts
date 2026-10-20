@@ -61,6 +61,8 @@ export interface SysmlSymbol {
   isFileRoot?: boolean;
   children: SysmlSymbol[];
   refs: SysmlRef[];
+  /** Declared multiplicity, without brackets, e.g. `4` or `0..*`. */
+  multiplicity?: string;
   nameRange: LspRange;
   range: LspRange;
   uri: string;
@@ -159,6 +161,34 @@ function childContexts(ctx: ParserRuleContext, name?: string): ParserRuleContext
 
 function firstChildContext(ctx: ParserRuleContext, name: string): ParserRuleContext | undefined {
   return childContexts(ctx, name)[0];
+}
+
+/**
+ * First descendant rule with the given name, without descending into nested
+ * declarations (a child feature's multiplicity must not leak to its owner).
+ */
+function findDescendant(ctx: ParserRuleContext, name: string, depth = 0): ParserRuleContext | undefined {
+  if (depth > 6) {
+    return undefined;
+  }
+  for (let i = 0; i < ctx.getChildCount(); i++) {
+    const c = ctx.getChild(i);
+    if (!isParserRuleContext(c)) {
+      continue;
+    }
+    const rule = ruleName(c);
+    if (rule === name) {
+      return c;
+    }
+    if (isDeclRule(rule)) {
+      continue;
+    }
+    const hit = findDescendant(c, name, depth + 1);
+    if (hit) {
+      return hit;
+    }
+  }
+  return undefined;
 }
 
 function childTerminals(ctx: ParserRuleContext): TerminalNode[] {
@@ -396,6 +426,14 @@ export function buildDocumentModel(uri: string, parse: ParseResult, library: boo
     const range = tokenRange(ctx);
     const parentRuleOfCtx = ctx.parentCtx ? ruleName(ctx.parentCtx) : undefined;
     const kind = kindForDecl(rule, parentRuleOfCtx);
+    const multiplicityCtx = findDescendant(ctx, 'ownedMultiplicity');
+    const multiplicity = multiplicityCtx
+      ? multiplicityCtx
+          .getText()
+          .replace(/^\[/, '')
+          .replace(/\]$/, '')
+          .trim()
+      : undefined;
     const sym: SysmlSymbol = {
       id: `${uri}#${range.start.line}:${range.start.character}`,
       name: ident.name,
@@ -406,6 +444,7 @@ export function buildDocumentModel(uri: string, parse: ParseResult, library: boo
       parent,
       children: [],
       refs: [],
+      multiplicity: multiplicity || undefined,
       nameRange: ident.range,
       range,
       uri,

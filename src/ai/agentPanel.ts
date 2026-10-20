@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
+import type { LanguageClient } from 'vscode-languageclient/node';
 import { buildContext, replacementText, snapshotEditor, truncate } from './context';
 import { SYSTEM_PROMPT, aiEnabled, describeError, extractCode, pickModel } from './model';
 import { proposeEdit } from './editPreview';
+import { confirmProposalParses } from './validate';
 
 /**
  * The last code block produced in the chat, so the "Preview as diff" button
@@ -88,7 +90,7 @@ async function handleChat(
 }
 
 /** Apply the last chat proposal to the active editor through a diff. */
-async function previewLast(): Promise<void> {
+async function previewLast(getClient: () => LanguageClient | undefined): Promise<void> {
   if (!lastProposal) {
     void vscode.window.showInformationMessage('SysML AI: ask the assistant for a change first.');
     return;
@@ -118,16 +120,22 @@ async function previewLast(): Promise<void> {
   } else {
     newText = replacementText(snapshot, code);
   }
+  if (!(await confirmProposalParses(getClient, newText))) {
+    return;
+  }
   await proposeEdit(snapshot.document, newText, 'SysML AI: proposed change');
 }
 
 /** Register the chat participant and its companion command. */
-export function registerAgentPanel(context: vscode.ExtensionContext): void {
+export function registerAgentPanel(
+  context: vscode.ExtensionContext,
+  getClient: () => LanguageClient | undefined
+): void {
   const participant = vscode.chat.createChatParticipant('sysml.assistant', handleChat);
   participant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'sysml-icon.svg');
   context.subscriptions.push(
     participant,
-    vscode.commands.registerCommand('sysml.ai.previewLast', () => previewLast())
+    vscode.commands.registerCommand('sysml.ai.previewLast', () => previewLast(getClient))
   );
 }
 

@@ -196,8 +196,11 @@ function buildModel(data) {
       id: n.id,
       name: n.label,
       kind: n.kind,
+      type: n.type,
+      multiplicity: n.multiplicity,
       depth: depths.get(n.id) || 0,
       kids: [],
+      ports: [],
       w: 150,
       h: 40,
       x: 0,
@@ -231,10 +234,31 @@ function buildModel(data) {
   }
 }
 
-/** Compute the block size from its header and compartment rows. */
+/**
+ * Row text in UML style: `name : Type [multiplicity]`.
+ * Long names are clipped to keep blocks readable.
+ */
+function featureText(feature) {
+  let text = feature.name;
+  if (feature.type) {
+    text += ' : ' + feature.type;
+  }
+  if (feature.multiplicity) {
+    text += ' [' + feature.multiplicity + ']';
+  }
+  return text;
+}
+
+/** Compute the block size from its header, ports and compartment rows. */
 function sizeNode(node) {
+  // Ports are drawn on the block border, not as compartment rows.
+  node.ports = node.kids.filter((kid) => /Port/.test(kid.kind));
+
   const groups = new Map();
   for (const kid of node.kids) {
+    if (/Port/.test(kid.kind)) {
+      continue;
+    }
     const key = compartmentOf(kid.kind);
     if (!groups.has(key)) {
       groups.set(key, []);
@@ -245,23 +269,46 @@ function sizeNode(node) {
   }
   node.compartments = [...groups.entries()].map(([key, items]) => ({
     title: COMPARTMENT_TITLES[key] || key,
-    rows: items.map((k) => k.name),
-    more: Math.max(0, node.kids.filter((k) => compartmentOf(k.kind) === key).length - items.length),
+    rows: items.map((k) => clipText(featureText(k), 250)),
+    more: Math.max(
+      0,
+      node.kids.filter((k) => !/Port/.test(k.kind) && compartmentOf(k.kind) === key).length -
+        items.length
+    ),
   }));
 
-  let widest = Math.max(textWidth('«' + stereotype(node.kind) + '»'), textWidth(node.name));
+  let widest = Math.max(textWidth('\u00ab' + stereotype(node.kind) + '\u00bb'), textWidth(node.name));
   for (const comp of node.compartments) {
     for (const row of comp.rows) {
       widest = Math.max(widest, textWidth(row) + 16);
     }
   }
-
-  node.w = Math.round(Math.max(150, Math.min(280, widest + 26)));
-  let h = 30; // stereotype + name
-  for (const comp of node.compartments) {
-    h += 14 + comp.rows.length * 13 + (comp.more ? 11 : 0) + 6;
+  for (const port of node.ports) {
+    widest = Math.max(widest, textWidth(clipText(featureText(port), 200)) + 34);
   }
-  node.h = Math.round(h + 8);
+
+  node.w = Math.round(Math.max(160, Math.min(300, widest + 26)));
+
+  let h = 30; // stereotype + name
+  let compartmentsHeight = 0;
+  for (const comp of node.compartments) {
+    compartmentsHeight += 14 + comp.rows.length * 13 + (comp.more ? 11 : 0) + 6;
+  }
+  const portsHeight = node.ports.length ? node.ports.length * 16 + 10 : 0;
+  h += Math.max(compartmentsHeight, portsHeight);
+  node.h = Math.round(h + 10);
+}
+
+/** Clip a string to a pixel budget, with an ellipsis when shortened. */
+function clipText(text, maxPx) {
+  if (textWidth(text) <= maxPx) {
+    return text;
+  }
+  let out = text;
+  while (out.length > 3 && textWidth(out + '\u2026') > maxPx) {
+    out = out.slice(0, -1);
+  }
+  return out + '\u2026';
 }
 
 // --- rendering -------------------------------------------------------------
@@ -363,6 +410,36 @@ function drawNodes() {
     g.appendChild(name);
 
     let y = -node.h / 2 + 34;
+
+    // Ports sit on the left border as small squares, the UML convention.
+    if (node.ports.length) {
+      const top = y + 2;
+      node.ports.forEach((port, index) => {
+        const py = top + index * 16;
+        g.appendChild(
+          el('rect', {
+            x: -node.w / 2 - 3.5,
+            y: py - 3.5,
+            width: 7,
+            height: 7,
+            class: 'port',
+            fill: '#1e1e1e',
+            stroke: color,
+            'stroke-width': 1.4,
+          })
+        );
+        const text = el('text', {
+          x: -node.w / 2 + 8,
+          y: py + 3.2,
+          class: 'row port-label',
+          fill: '#c9d1d9',
+        });
+        text.textContent = clipText(featureText(port), node.w - 24);
+        g.appendChild(text);
+      });
+      y = top + node.ports.length * 16 + 4;
+    }
+
     for (const comp of node.compartments) {
       g.appendChild(
         el('line', {
@@ -518,57 +595,135 @@ function applyPositions() {
 
 // --- layouts ---------------------------------------------------------------
 
+/**
+ * Layered (Sugiyama-style) layout for the containment hierarchy.
+ *
+ * 1. Assign each node to a layer by longest path from a root.
+ * 2. Reduce crossings with barycenter sweeps using parent/child order.
+ * 3. Pack each layer and align nodes towards their neighbours, resolving
+ *    overlaps while keeping the order stable.
+ *
+ * This keeps the hierarchy readable on models with hundreds of blocks, where
+ * the previous recursive tree produced wide, crossing-heavy rows.
+ */
 function layoutTree() {
   const kids = new Map();
+  const parents = new Map();
   const hasParent = new Set();
   for (const edge of model.edges) {
     if (edge.kind !== 'contains') continue;
     if (!kids.has(edge.from.id)) kids.set(edge.from.id, []);
     kids.get(edge.from.id).push(edge.to);
+    if (!parents.has(edge.to.id)) parents.set(edge.to.id, []);
+    parents.get(edge.to.id).push(edge.from);
     hasParent.add(edge.to.id);
   }
+
   const roots = model.nodes.filter((n) => !hasParent.has(n.id));
-  const order = roots.length ? roots : model.nodes.slice(0, 1);
+  const layerOf = new Map();
+  const queue = roots.map((node) => ({ node, depth: 0 }));
+  while (queue.length) {
+    const { node, depth } = queue.shift();
+    if ((layerOf.get(node.id) ?? -1) >= depth) {
+      continue;
+    }
+    layerOf.set(node.id, depth);
+    for (const kid of kids.get(node.id) || []) {
+      queue.push({ node: kid, depth: depth + 1 });
+    }
+  }
 
-  const GAP_X = 34;
-  const GAP_Y = 52;
-  const levelHeight = [];
+  const layers = [];
   for (const node of model.nodes) {
-    levelHeight[node.depth] = Math.max(levelHeight[node.depth] || 0, node.h);
+    const depth = layerOf.get(node.id) ?? 0;
+    (layers[depth] ??= []).push(node);
   }
-  const levelY = [];
-  let y = 0;
-  for (let i = 0; i < levelHeight.length; i++) {
-    levelY[i] = y + (levelHeight[i] || 0) / 2;
-    y += (levelHeight[i] || 0) + GAP_Y;
+  // Drop empty layers left by filtered or orphaned nodes.
+  const packed = layers.filter(Boolean);
+
+  // Barycenter sweeps: alternate downward and upward.
+  const position = () => {
+    const map = new Map();
+    for (const layer of packed) {
+      layer.forEach((node, index) => map.set(node.id, index));
+    }
+    return map;
+  };
+  for (let sweep = 0; sweep < 4; sweep++) {
+    const downward = sweep % 2 === 0;
+    const pos = position();
+    const order = downward ? packed : [...packed].reverse();
+    for (const layer of order) {
+      for (const node of layer) {
+        const neighbours = downward ? parents.get(node.id) : kids.get(node.id);
+        if (neighbours && neighbours.length) {
+          const sum = neighbours.reduce((acc, n) => acc + (pos.get(n.id) ?? 0), 0);
+          node._bary = sum / neighbours.length;
+        } else {
+          node._bary = pos.get(node.id) ?? 0;
+        }
+      }
+      layer.sort((a, b) => a._bary - b._bary);
+    }
   }
 
-  const place = (node, left) => {
-    const children = kids.get(node.id) || [];
-    if (!children.length) {
-      node.x = left + node.w / 2;
-      return node.w;
+  const GAP_X = 38;
+  const GAP_Y = 64;
+
+  const packLayer = (layer) => {
+    if (!layer.length) return;
+    let cursor = 0;
+    for (const node of layer) {
+      node._x = cursor + node.w / 2;
+      cursor += node.w + GAP_X;
     }
-    let cursor = left;
-    let total = 0;
-    for (const kid of children) {
-      const w = place(kid, cursor);
-      cursor += w + GAP_X;
-      total += w + GAP_X;
+    const center = layer.reduce((acc, n) => acc + n._x, 0) / layer.length;
+    for (const node of layer) {
+      node.x = node._x - center;
     }
-    total -= GAP_X;
-    const width = Math.max(node.w, total);
-    node.x = left + width / 2;
-    return width;
   };
 
-  let cursor = 0;
-  for (const root of order) {
-    cursor += place(root, cursor) + GAP_X * 2;
+  // Initial packing, then align towards parents.
+  for (const layer of packed) {
+    packLayer(layer);
   }
-  for (const node of model.nodes) {
-    node.y = levelY[node.depth] || 0;
+  for (let pass = 0; pass < 3; pass++) {
+    for (let index = 1; index < packed.length; index++) {
+      const layer = packed[index];
+      for (const node of layer) {
+        const ps = parents.get(node.id) || [];
+        if (ps.length) {
+          node._desired = ps.reduce((acc, p) => acc + p.x, 0) / ps.length;
+        } else {
+          node._desired = node.x;
+        }
+      }
+      layer.sort((a, b) => a._desired - b._desired);
+      let cursor = -Infinity;
+      for (const node of layer) {
+        node.x = Math.max(node._desired, cursor + GAP_X + node.w / 2);
+        cursor = node.x + node.w / 2;
+      }
+      // Re-center the layer to avoid drift across passes.
+      const center = layer.reduce((acc, n) => acc + n.x, 0) / layer.length;
+      for (const node of layer) node.x -= center;
+    }
   }
+
+  let y = 0;
+  for (const layer of packed) {
+    const height = Math.max(...layer.map((n) => n.h));
+    for (const node of layer) {
+      node.y = y + height / 2;
+    }
+    y += height + GAP_Y;
+  }
+
+  // Keep the whole diagram centered around the origin.
+  const minX = Math.min(...model.nodes.map((n) => n.x - n.w / 2));
+  const maxX = Math.max(...model.nodes.map((n) => n.x + n.w / 2));
+  const shift = (minX + maxX) / 2;
+  for (const node of model.nodes) node.x -= shift;
 }
 
 function layoutGrid() {

@@ -147,6 +147,11 @@
         "icon": "$(graph)"
       },
       {
+        "command": "sysml.openTraceability",
+        "title": "SysML: Open Traceability Matrix",
+        "icon": "$(checklist)"
+      },
+      {
         "command": "sysml.refreshGraph",
         "title": "SysML: Refresh Structure Graph"
       },
@@ -194,6 +199,11 @@
           "group": "navigation"
         },
         {
+          "command": "sysml.openTraceability",
+          "when": "resourceLangId == sysml || resourceLangId == kerml",
+          "group": "navigation"
+        },
+        {
           "command": "sysml.ai.inlineAssist",
           "when": "resourceLangId == sysml || resourceLangId == kerml",
           "group": "navigation"
@@ -234,6 +244,11 @@
         },
         {
           "command": "sysml.openGraphPanel",
+          "when": "view == sysml.modelExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "sysml.openTraceability",
           "when": "view == sysml.modelExplorer",
           "group": "navigation"
         }
@@ -296,6 +311,7 @@
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.21.0",
     "typescript": "^5.5.0"
   }

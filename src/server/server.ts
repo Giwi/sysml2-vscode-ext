@@ -7,15 +7,23 @@ import {
   TextDocuments,
   TextDocumentSyncKind,
 } from 'vscode-languageserver/node.js';
-import type { Diagnostic, Location, SymbolInformation } from 'vscode-languageserver/node.js';
+import type {
+  CodeAction,
+  Diagnostic,
+  Location,
+  SymbolInformation,
+  TextEdit,
+} from 'vscode-languageserver/node.js';
+import { CodeActionKind } from 'vscode-languageserver/node.js';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseText } from './parser.js';
 import { refAtPosition, symbolAtPosition } from './model.js';
-import type { DocumentModel, SysmlSymbol } from './model.js';
+import type { DocumentModel, LspRange, SysmlSymbol } from './model.js';
 import { Workspace } from './workspace.js';
 import type { IndexedSymbol } from './workspace.js';
+import { formatText } from './format.js';
 
 const KEYWORDS = [
   'about', 'abstract', 'accept', 'action', 'actor', 'after', 'alias', 'all', 'allocate', 'allocation',
@@ -306,6 +314,9 @@ connection.onInitialize((params) => {
       definitionProvider: true,
       referencesProvider: true,
       hoverProvider: true,
+      documentFormattingProvider: true,
+      renameProvider: { prepareProvider: true },
+      codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
       completionProvider: {
         triggerCharacters: [':', '.', ' ', '>'],
         resolveProvider: false,
@@ -535,6 +546,265 @@ connection.onReferences((params) => {
   return locations;
 });
 
+// --- Rename ---
+
+/** Range of the last segment of a possibly qualified reference. */
+function lastSegmentRange(ref: { range: LspRange; text: string }): LspRange {
+  const segments = ref.text.split('::');
+  if (segments.length === 1) {
+    return ref.range;
+  }
+  const last = segments[segments.length - 1];
+  return {
+    start: {
+      line: ref.range.end.line,
+      character: Math.max(ref.range.start.character, ref.range.end.character - last.length),
+    },
+    end: ref.range.end,
+  };
+}
+
+connection.onPrepareRename((params) => {
+  const model = workspace.docs.get(params.textDocument.uri);
+  if (!model) {
+    return null;
+  }
+  const { line, character } = params.position;
+  const sym = symbolAtPosition(model, line, character);
+  if (sym && !sym.isFileRoot) {
+    if (sym.library) {
+      return null; // the standard library is read-only
+    }
+    return { range: sym.nameRange, placeholder: sym.name };
+  }
+  const ref = refAtPosition(model, line, character);
+  if (ref?.resolved) {
+    return { range: lastSegmentRange(ref), placeholder: ref.resolved.name };
+  }
+  return null;
+});
+
+connection.onRenameRequest((params) => {
+  const model = workspace.docs.get(params.textDocument.uri);
+  if (!model) {
+    return null;
+  }
+  const newName = params.newName;
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(newName)) {
+    return null;
+  }
+
+  const { line, character } = params.position;
+  const ref = refAtPosition(model, line, character);
+  let targetId: string | undefined;
+  let targetQName: string | undefined;
+  let targetUri: string | undefined;
+
+  if (ref?.resolved) {
+    targetQName = ref.resolved.qname;
+    targetUri = ref.resolved.uri;
+  } else {
+    const sym = symbolAtPosition(model, line, character);
+    if (!sym || sym.isFileRoot || sym.library) {
+      return null;
+    }
+    targetId = sym.id;
+    targetQName = sym.qname;
+    targetUri = model.uri;
+  }
+  if (!targetQName || !targetUri) {
+    return null;
+  }
+
+  const changes: Record<string, TextEdit[]> = {};
+  const addEdit = (uri: string, range: LspRange): void => {
+    (changes[uri] ??= []).push({ range, newText: newName });
+  };
+
+  for (const docModel of workspace.docs.values()) {
+    if (docModel.library) {
+      continue;
+    }
+    const visit = (sym: SysmlSymbol): void => {
+      if (sym.id === targetId) {
+        addEdit(docModel.uri, sym.nameRange);
+      }
+      for (const r of sym.refs) {
+        if (r.resolved && r.resolved.qname === targetQName && r.resolved.uri === targetUri) {
+          addEdit(docModel.uri, lastSegmentRange(r));
+        }
+      }
+      for (const child of sym.children) {
+        visit(child);
+      }
+    };
+    visit(docModel.root);
+  }
+
+  return { changes };
+});
+
+// --- Code actions ---
+
+const SCALAR_TYPES = new Set([
+  'Real',
+  'Integer',
+  'Natural',
+  'Boolean',
+  'String',
+  'Rational',
+  'Complex',
+  'UnlimitedNatural',
+]);
+
+/** Insert an import at the top of the enclosing package, or of the file. */
+function importEdit(document: TextDocument, moduleName: string): TextEdit | undefined {
+  const text = document.getText();
+  if (new RegExp(`import\\s+${moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(text)) {
+    return undefined;
+  }
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < Math.min(lines.length, 40); i++) {
+    const match = /^(\s*)(package|library package|namespace)\b[^{]*\{\s*$/.exec(lines[i]);
+    if (match) {
+      return {
+        range: { start: { line: i + 1, character: 0 }, end: { line: i + 1, character: 0 } },
+        newText: `${match[1]}    import ${moduleName}::*;\n`,
+      };
+    }
+  }
+  return {
+    range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+    newText: `import ${moduleName}::*;\n`,
+  };
+}
+
+function editDistance(a: string, b: string): number {
+  if (a === b) {
+    return 0;
+  }
+  if (Math.abs(a.length - b.length) > 2) {
+    return 3;
+  }
+  const prev = new Array(b.length + 1).fill(0).map((_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let last = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = prev[j];
+      prev[j] = Math.min(
+        prev[j] + 1,
+        prev[j - 1] + 1,
+        last + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+      last = tmp;
+    }
+  }
+  return prev[b.length];
+}
+
+connection.onCodeAction((params) => {
+  const model = workspace.docs.get(params.textDocument.uri);
+  const document = documents.get(params.textDocument.uri);
+  if (!model || !document) {
+    return [];
+  }
+  const actions: CodeAction[] = [];
+
+  for (const diagnostic of params.context.diagnostics) {
+    const unresolved = /^Unresolved reference '(.+)'$/.exec(diagnostic.message);
+    if (!unresolved) {
+      continue;
+    }
+    const name = unresolved[1];
+    const lastSegment = name.split('::').pop() ?? name;
+
+    // 1. Exact standard-library symbol: import its owning package.
+    const libraryHit = workspace
+      .lookupByName(lastSegment)
+      .find((entry) => entry.model.library);
+    if (libraryHit) {
+      const owner = libraryHit.sym.parent?.qname || libraryHit.sym.qname.split('::')[0];
+      if (owner) {
+        const edit = importEdit(document, owner);
+        if (edit) {
+          actions.push({
+            title: `Import ${owner}`,
+            kind: CodeActionKind.QuickFix,
+            diagnostics: [diagnostic],
+            edit: { changes: { [model.uri]: [edit] } },
+          });
+        }
+      }
+    }
+
+    // 2. Scalar types live in ScalarValues, which is the common case.
+    if (SCALAR_TYPES.has(lastSegment) && !/import\s+ScalarValues/.test(document.getText())) {
+      const edit = importEdit(document, 'ScalarValues');
+      if (edit) {
+        actions.push({
+          title: 'Import ScalarValues',
+          kind: CodeActionKind.QuickFix,
+          diagnostics: [diagnostic],
+          edit: { changes: { [model.uri]: [edit] } },
+        });
+      }
+    }
+
+    // 3. Likely typo of a user declaration: offer the closest name.
+    let best: { name: string; distance: number } | undefined;
+    for (const candidate of workspace.allSymbols()) {
+      if (candidate.model.library || candidate.sym.name === lastSegment) {
+        continue;
+      }
+      const distance = editDistance(lastSegment.toLowerCase(), candidate.sym.name.toLowerCase());
+      if (distance <= 2 && (!best || distance < best.distance)) {
+        best = { name: candidate.sym.name, distance };
+      }
+    }
+    if (best) {
+      actions.push({
+        title: `Change to '${best.name}'`,
+        kind: CodeActionKind.QuickFix,
+        diagnostics: [diagnostic],
+        edit: {
+          changes: {
+            [model.uri]: [{ range: diagnostic.range, newText: best.name }],
+          },
+        },
+      });
+    }
+  }
+
+  return actions;
+});
+
+// --- Formatting ---
+
+connection.onDocumentFormatting((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) {
+    return [];
+  }
+  const text = document.getText();
+  const formatted = formatText(text, {
+    insertSpaces: params.options.insertSpaces,
+    tabSize: params.options.tabSize,
+  });
+  if (formatted === text) {
+    return [];
+  }
+  return [
+    {
+      range: {
+        start: { line: 0, character: 0 },
+        end: document.positionAt(text.length),
+      },
+      newText: formatted,
+    },
+  ];
+});
+
 connection.onHover((params) => {
   const model = workspace.docs.get(params.textDocument.uri);
   if (!model) {
@@ -659,6 +929,10 @@ interface GraphNode {
   kind: string;
   depth: number;
   children: number;
+  /** Declared type, e.g. `Wheel` in `part wheel : Wheel`. */
+  type?: string;
+  /** Declared multiplicity without brackets, e.g. `4`. */
+  multiplicity?: string;
 }
 
 interface GraphEdge {
@@ -691,12 +965,15 @@ connection.onRequest('sysml/graph', (params: { uri: string; maxNodes?: number })
     }
     if (!nodeIds.has(sym.id)) {
       nodeIds.add(sym.id);
+      const typing = sym.refs.find((r) => r.kind === 'typing');
       nodes.push({
         id: sym.id,
         label: sym.name,
         kind: sym.kind,
         depth,
         children: sym.children.length,
+        type: typing?.text,
+        multiplicity: sym.multiplicity,
       });
     }
     return true;
@@ -765,8 +1042,7 @@ function toModelTree(sym: SysmlSymbol, uri: string): ModelTreeNode {
  * declaration tree underneath. Standard library files are excluded because
  * they would dominate the tree.
  */
-connection.onRequest('sysml/modelTree', () => {
-  const files: ModelTreeNode[] = [];
+connection.onRequest('sysml/modelTree', () => {  const files: ModelTreeNode[] = [];
   for (const model of workspace.docs.values()) {
     if (model.library || model.symbols.length === 0) {
       continue;
@@ -783,6 +1059,104 @@ connection.onRequest('sysml/modelTree', () => {
   }
   files.sort((a, b) => a.name.localeCompare(b.name));
   return files;
+});
+
+// --- Traceability: requirements <-> verification cases ---
+
+interface TraceTarget {
+  id: string;
+  name: string;
+  qname: string;
+  uri: string;
+  line: number;
+  character: number;
+}
+
+interface TraceLink {
+  requirement: string;
+  verification: string;
+}
+
+/**
+ * Build the requirement/verification matrix.
+ *
+ * A verification case links to a requirement through a `subsets` reference:
+ * `verify VehicleRequirement;` is parsed as an owned reference subsetting on
+ * the verification usage, which is exactly the relationship the matrix needs.
+ */
+connection.onRequest('sysml/traceability', () => {
+  const requirements: TraceTarget[] = [];
+  const verifications: TraceTarget[] = [];
+  const links: TraceLink[] = [];
+
+  const toTarget = (sym: SysmlSymbol, uri: string): TraceTarget => ({
+    id: sym.id,
+    name: sym.name,
+    qname: sym.qname,
+    uri,
+    line: sym.nameRange.start.line,
+    character: sym.nameRange.start.character,
+  });
+
+  // First pass: every requirement, so links can be resolved regardless of
+  // declaration order between files.
+  for (const model of workspace.docs.values()) {
+    if (model.library) {
+      continue;
+    }
+    const visit = (sym: SysmlSymbol): void => {
+      if (/Requirement/.test(sym.kind)) {
+        requirements.push(toTarget(sym, model.uri));
+      }
+      for (const child of sym.children) {
+        visit(child);
+      }
+    };
+    visit(model.root);
+  }
+
+  for (const model of workspace.docs.values()) {    if (model.library) {
+      continue;
+    }
+    const visit = (sym: SysmlSymbol): void => {
+      if (/Verification/.test(sym.kind)) {
+        verifications.push(toTarget(sym, model.uri));
+        for (const ref of sym.refs) {
+          if (!ref.resolved || !/Requirement/.test(ref.resolved.kind)) {
+            continue;
+          }
+          const target = requirements.find(
+            (r) => r.qname === ref.resolved!.qname && r.uri === ref.resolved!.uri
+          );
+          if (target) {
+            links.push({ requirement: target.id, verification: sym.id });
+          }
+        }
+      }
+      for (const child of sym.children) {
+        visit(child);
+      }
+    };
+    visit(model.root);
+  }
+
+  return { requirements, verifications, links };
+});
+
+// --- Validation for AI-generated text (no workspace side effects) ---
+
+connection.onRequest('sysml/validate', (params: { text: string }) => {
+  if (typeof params?.text !== 'string') {
+    return { errors: [] };
+  }
+  try {
+    const result = parseText(params.text, false);
+    return { errors: result.errors };
+  } catch (error) {
+    return {
+      errors: [{ line: 0, column: 0, message: `Could not parse: ${String(error)}` }],
+    };
+  }
 });
 
 function fileNameOf(uri: string): string {

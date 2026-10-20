@@ -16,8 +16,13 @@ The extension ships its own TypeScript language server built on an ANTLR4 parser
 | Diagnostics | Syntax errors, duplicate declarations and unresolved references reported as you type |
 | Outline and breadcrumbs | Full symbol tree for packages, definitions, usages, connectors, flows, states |
 | Model Explorer | Tree view listing elements by file, following the containment hierarchy |
-| Graph layouts and export | Tree, force, circle and grid layouts, plus PNG and SVG image export |
+| Graph layouts and export | Layered, force, circle and grid layouts, plus PNG and SVG image export |
 | Graph exploration | Search, kind filter, zoom and fit, selection details, in a full-width panel |
+| UML blocks | Stereotype header, compartments with `name : Type [multiplicity]`, ports drawn on the block border |
+| Traceability matrix | Requirements against verification cases, with unverified requirements called out |
+| Rename | Rename a declaration and every resolved reference, across files |
+| Code actions | Import a standard-library package, fix a misspelled name, add `ScalarValues` |
+| Formatting | Normalise indentation and trailing whitespace, preserving comments and blank lines |
 | Go to definition | On typing, specialization, subsetting, redefinition, crossing, import and alias references |
 | Find all references | Across every file in the workspace |
 | Hover | Kind, qualified name, owning namespace, and a marker when the target comes from the standard library |
@@ -91,7 +96,7 @@ The layout selector in the toolbar switches between four layouts:
 
 | Layout | Description |
 |--------|-------------|
-| Tree (hierarchy) | Hierarchical tree from the containment edges (default). Cross-reference edges are hidden so the tree keeps its shape |
+| Layered (hierarchy) | Sugiyama-style layered layout from the containment edges (default). Crossing reduction and parent alignment keep large models readable |
 | Force | Force-directed layout, best for seeing clusters of related elements |
 | Circle | Elements arranged on a circle, compact for small models |
 | Grid | Uniform grid, useful when comparing many similar elements |
@@ -104,6 +109,18 @@ The layout selector in the toolbar switches between four layouts:
 | SVG | Vector image that stays sharp at any zoom level |
 
 Both buttons open a save dialog and export the whole diagram, not just the visible area. The SVG is produced natively, so it stays sharp at any zoom level.
+
+### Traceability matrix
+
+**SysML: Open Traceability Matrix** opens a table of requirements (rows) against verification cases (columns). A check mark means the verification case references the requirement through `verify <requirement>;`; the panel also lists requirements with no verification. Clicking any name opens its declaration. The matrix refreshes when the model changes.
+
+### Editing
+
+| Feature | Behaviour |
+|---------|-----------|
+| Rename (`F2`) | Renames the declaration and every resolved reference, including qualified references in other files. Standard-library symbols are read-only |
+| Quick fixes | Unresolved reference offers the owning standard-library import, `import ScalarValues` for scalar types, and the closest declared name when the text is a near miss |
+| Format document | Re-indents from brace depth, trims trailing whitespace, collapses blank-line runs. Strings and comments are ignored when counting braces, so tokens and comments are preserved |
 
 ### AI assistance
 
@@ -118,6 +135,8 @@ The extension integrates with the editor's native language model API (`vscode.lm
 **Agent panel.** The **SysML Assistant** chat participant is available in the Chat view. It receives the same editor context automatically and supports `/explain` and `/generate`. When the answer contains a SysML code block, a **Preview change as diff** button appears.
 
 **Diff review.** Proposals open in a normal diff editor with `Accept AI change` and `Reject` code lenses, and the notification offers the same two actions. Accepting applies a single full-document edit, so one undo reverts the whole change, and saves the file.
+
+Every proposal is parsed by the language server before the diff opens. If the generated SysML has syntax errors, the assistant reports the first error and offers **Show errors** or **Propose anyway**.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -144,6 +163,17 @@ npm run vscode:prepublish
 npx @vscode/vsce package
 ```
 
+### Releasing
+
+Push a tag that matches `package.json`:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` runs the typecheck and the test suite, verifies the tag against `package.json`, builds the VSIX and attaches it to a GitHub release. Manual runs (`workflow_dispatch`) build and upload the VSIX as an artifact without creating a release.
+
 ## Settings
 
 | Setting | Default | Description |
@@ -162,6 +192,7 @@ npx @vscode/vsce package
 |---------|-------------|
 | `SysML: Refresh Model Explorer` | Re-request the element tree from the language server |
 | `SysML: Open Structure Graph Panel` | Open the graph in a full-width editor-area panel |
+| `SysML: Open Traceability Matrix` | Open the requirements / verification matrix |
 | `SysML: Refresh Structure Graph` | Re-request the graph for the active editor |
 | `SysML: Export Structure Graph as DOT` | Save the current graph as a Graphviz `.dot` file |
 | `SysML: Restart Language Server` | Restart the language server and re-index the workspace |

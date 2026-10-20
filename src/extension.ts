@@ -4,6 +4,7 @@ import { LanguageClient } from 'vscode-languageclient/node';
 import type { LanguageClientOptions } from 'vscode-languageclient/node';
 import { GraphSession, SysmlGraphPanel } from './graphView';
 import { SysmlModelExplorer } from './modelExplorer';
+import { SysmlTraceabilityPanel } from './traceability';
 import { registerAgentPanel } from './ai/agentPanel';
 import { registerEditPreview } from './ai/editPreview';
 import { registerInlineAssist } from './ai/inlineAssist';
@@ -58,6 +59,7 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
   const session = new GraphSession(context, () => client);
   const graphPanel = new SysmlGraphPanel(session);
   const modelExplorer = new SysmlModelExplorer(() => client);
+  const traceability = new SysmlTraceabilityPanel(() => client);
 
   const refreshGraph = (): Promise<void> => session.refresh(() => graphPanel.webviews());
 
@@ -68,6 +70,7 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
     graphPanel,
     vscode.commands.registerCommand('sysml.refreshModelExplorer', () => modelExplorer.refresh()),
     vscode.commands.registerCommand('sysml.openGraphPanel', () => graphPanel.show()),
+    vscode.commands.registerCommand('sysml.openTraceability', () => traceability.show()),
     vscode.commands.registerCommand('sysml.refreshGraph', () => refreshGraph()),
     vscode.commands.registerCommand('sysml.exportGraph', () => session.exportDot()),
     vscode.window.onDidChangeActiveTextEditor(() => void refreshGraph())
@@ -76,9 +79,9 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
   // AI features are registered up front as well: the commands explain how to
   // enable a model when none is available, instead of failing silently.
   registerEditPreview(context);
-  registerInlineAssist(context);
+  registerInlineAssist(context, () => client);
   if (typeof vscode.chat?.createChatParticipant === 'function') {
-    registerAgentPanel(context);
+    registerAgentPanel(context, () => client);
   }
 
   // Re-register the model-change notification on every new client instance.
@@ -86,6 +89,7 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
     c.onNotification('sysml/modelChanged', () => {
       session.scheduleRefresh(() => graphPanel.webviews());
       modelExplorer.scheduleRefresh();
+      void traceability.refresh();
     });
   };
 
