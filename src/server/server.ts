@@ -564,22 +564,39 @@ function lastSegmentRange(ref: { range: LspRange; text: string }): LspRange {
   };
 }
 
+/** True when the 0-based position falls inside the range (end exclusive). */
+function rangeContains(range: LspRange, line: number, character: number): boolean {
+  if (line < range.start.line || line > range.end.line) {
+    return false;
+  }
+  if (line === range.start.line && character < range.start.character) {
+    return false;
+  }
+  if (line === range.end.line && character >= range.end.character) {
+    return false;
+  }
+  return true;
+}
+
 connection.onPrepareRename((params) => {
   const model = workspace.docs.get(params.textDocument.uri);
   if (!model) {
     return null;
   }
   const { line, character } = params.position;
+
+  // A reference inside a declaration must win over the enclosing declaration.
+  const ref = refAtPosition(model, line, character);
+  if (ref?.resolved) {
+    return { range: lastSegmentRange(ref), placeholder: ref.resolved.name };
+  }
+
   const sym = symbolAtPosition(model, line, character);
-  if (sym && !sym.isFileRoot) {
+  if (sym && !sym.isFileRoot && rangeContains(sym.nameRange, line, character)) {
     if (sym.library) {
       return null; // the standard library is read-only
     }
     return { range: sym.nameRange, placeholder: sym.name };
-  }
-  const ref = refAtPosition(model, line, character);
-  if (ref?.resolved) {
-    return { range: lastSegmentRange(ref), placeholder: ref.resolved.name };
   }
   return null;
 });
