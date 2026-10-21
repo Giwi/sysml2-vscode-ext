@@ -27,6 +27,10 @@ The extension ships its own TypeScript language server built on an ANTLR4 parser
 | Find all references | Across every file in the workspace |
 | Hover | Kind, qualified name, owning namespace, and a marker when the target comes from the standard library |
 | Workspace symbol search | `Ctrl+T` / `Cmd+T`, ranked prefix then fuzzy matching (library excluded to keep results focused) |
+| Semantic highlighting | Declarations and resolved references coloured by kind: namespace, class, interface, enum, function, property |
+| Folding | Brace regions, block comments and consecutive line comments |
+| Inlay hints | Inferred type of features that have a literal default (`attribute mass = 12.5` shows `: Real`) |
+| Signature help | Parameters of `calc def` and `action def` calls, read from the header or from `in`/`out`/`return` features |
 | Completion | SysML/KerML keywords plus in-scope, file-level and workspace symbols |
 | Snippets | 40 templates for common constructs (`part def`, `package`, `requirement def`, `state def`, `calc def`, ...) |
 | Bracket and comment config | `{}`, `[]`, `()`, `'...'`, `"..."`, `/* ... */` |

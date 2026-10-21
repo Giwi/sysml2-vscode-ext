@@ -384,6 +384,80 @@ async function main(): Promise<void> {
   );
   console.log('ok traceability: objective created when missing');
 
+  // Semantic tokens: declarations and resolved references.
+  const semantic = await send('textDocument/semanticTokens/full', {
+    textDocument: { uri: demoUri },
+  });
+  const tokenData = semantic.result?.data ?? [];
+  assert.ok(tokenData.length > 0, 'semantic tokens are produced');
+  assert.equal(tokenData.length % 5, 0, 'tokens are 5-tuples');
+  console.log('ok semantic tokens:', tokenData.length / 5, 'tokens');
+
+  // Folding: braces become regions.
+  const folding = await send('textDocument/foldingRange', { textDocument: { uri: demoUri } });
+  assert.ok((folding.result ?? []).length > 0, 'folding ranges are produced');
+  assert.ok(
+    (folding.result ?? []).some((range: any) => range.kind === 'region'),
+    'brace regions are folded'
+  );
+  console.log('ok folding:', (folding.result ?? []).length, 'ranges');
+
+  // Inlay hints infer literal types.
+  const hintText =
+    'package H {\n  attribute mass = 12.5;\n  attribute count = 3;\n  attribute label = "x";\n}\n';
+  const hintUri = 'file://' + path.resolve('/tmp/sysml-e2e-hints.sysml');
+  notify('textDocument/didOpen', {
+    textDocument: { uri: hintUri, languageId: 'sysml', version: 1, text: hintText },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const hintValidation = await send('sysml/validate', { text: hintText });
+  assert.equal((hintValidation.result?.errors ?? []).length, 0, 'inlay hint sample parses');
+  const hints = await send('textDocument/inlayHint', {
+    textDocument: { uri: hintUri },
+    range: { start: { line: 0, character: 0 }, end: { line: 4, character: 0 } },
+  });
+  const labels = (hints.result ?? []).map((hint: any) => hint.label);
+  assert.ok(labels.includes(': Real'), 'real literal hint');
+  assert.ok(labels.includes(': Integer'), 'integer literal hint');
+  assert.ok(labels.includes(': String'), 'string literal hint');
+  console.log('ok inlay hints:', labels.join(', '));
+
+  // Signature help for a calc invocation.
+  const calcText = [
+    'package F {',
+    '  calc def Mass {',
+    '    in mass : Real;',
+    '    in gravity : Real;',
+    '    return : Real;',
+    '  }',
+    '  attribute weight = Mass(10, 9.81);',
+    '}',
+    '',
+  ].join('\n');
+  const calcUri = 'file://' + path.resolve('/tmp/sysml-e2e-signature.sysml');
+  notify('textDocument/didOpen', {
+    textDocument: { uri: calcUri, languageId: 'sysml', version: 1, text: calcText },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const calcValidation = await send('sysml/validate', { text: calcText });
+  assert.equal((calcValidation.result?.errors ?? []).length, 0, 'calc invocation sample parses');
+  const calcLines = calcText.split('\n');
+  const callLineIndex = calcLines.findIndex((line) => line.includes('Mass(10,'));
+  const callLine = calcLines[callLineIndex];
+  const callPosition = {
+    line: callLineIndex,
+    character: callLine.indexOf('Mass(10,') + 'Mass(10,'.length,
+  };
+  const help = await send('textDocument/signatureHelp', {
+    textDocument: { uri: calcUri },
+    position: callPosition,
+  });
+  assert.ok(help.result, 'signature help is returned');
+  const signature = help.result.signatures?.[0];
+  assert.match(signature.label, /Mass\(in mass : Real, in gravity : Real, return : Real\)/);
+  assert.equal(help.result.activeParameter, 1, 'cursor is on the second argument');
+  console.log('ok signature help:', signature.label);
+
   proc.kill();
   console.log('LSP E2E PASSED');
 }

@@ -5,6 +5,7 @@ import { parseText } from '../src/server/parser.js';
 import { buildDocumentModel, flattenSymbols } from '../src/server/model.js';
 import { extractCode } from '../src/ai/code.js';
 import { formatText } from '../src/server/format.js';
+import { foldingRanges, semanticTokens } from '../src/server/navigation.js';
 
 const demo = readFileSync('examples/demo/demo.sysml', 'utf8');
 const demoModel = buildDocumentModel('file:///demo.sysml', parseText(demo, false), false);
@@ -97,4 +98,16 @@ test('format: alignment is idempotent', () => {
   const once = formatText(input, { insertSpaces: true, tabSize: 2, alignMembers: true });
   const twice = formatText(once, { insertSpaces: true, tabSize: 2, alignMembers: true });
   assert.equal(twice, once);
+});
+
+test('navigation: semantic tokens cover declarations', () => {
+  const tokens = semanticTokens(demoModel);
+  assert.ok(tokens.data.length > 0, 'tokens are produced');
+  assert.equal(tokens.data.length % 5, 0, 'tokens are 5-tuples');
+});
+
+test('navigation: folds brace regions and comment blocks', () => {
+  const ranges = foldingRanges('package P {\n  // first\n  // second\n  part p : P;\n}\n');
+  assert.ok(ranges.some((range) => range.kind === 'region'), 'brace region');
+  assert.ok(ranges.some((range) => range.kind === 'comment'), 'comment block');
 });

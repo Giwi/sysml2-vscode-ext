@@ -26,6 +26,14 @@ import type { DocumentModel, LspRange, RefKind, SysmlSymbol } from './model.js';
 import { Workspace } from './workspace.js';
 import type { IndexedSymbol } from './workspace.js';
 import { formatText } from './format.js';
+import {
+  SEMANTIC_TOKEN_MODIFIERS,
+  SEMANTIC_TOKEN_TYPES,
+  foldingRanges,
+  inlayHints,
+  semanticTokens,
+  signatureHelp,
+} from './navigation.js';
 import type {
   GraphEdge,
   GraphNode,
@@ -336,6 +344,19 @@ connection.onInitialize((params) => {
       documentFormattingProvider: true,
       renameProvider: { prepareProvider: true },
       codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
+      semanticTokensProvider: {
+        legend: {
+          tokenTypes: [...SEMANTIC_TOKEN_TYPES],
+          tokenModifiers: [...SEMANTIC_TOKEN_MODIFIERS],
+        },
+        full: true,
+      },
+      foldingRangeProvider: true,
+      inlayHintProvider: true,
+      signatureHelpProvider: {
+        triggerCharacters: ['(', ','],
+        retriggerCharacters: [','],
+      },
       completionProvider: {
         triggerCharacters: [':', '.', ' ', '>'],
         resolveProvider: false,
@@ -1158,6 +1179,55 @@ connection.onDocumentFormatting((params) => {
       newText: formatted,
     },
   ];
+});
+
+// --- Navigation: semantic tokens, folding, inlay hints, signature help ---
+
+connection.languages.semanticTokens.on((params) => {
+  const model = workspace.docs.get(params.textDocument.uri);
+  return model ? semanticTokens(model) : { data: [] };
+});
+
+connection.onFoldingRanges((params) => {
+  const document = documents.get(params.textDocument.uri);
+  return document ? foldingRanges(document.getText()) : [];
+});
+
+connection.onRequest(
+  'textDocument/inlayHint',
+  (params: { textDocument: { uri: string } }) => {
+    const model = workspace.docs.get(params.textDocument.uri);
+    const document = documents.get(params.textDocument.uri);
+    return model && document ? inlayHints(model, document) : [];
+  }
+);
+
+connection.onSignatureHelp((params) => {
+  const model = workspace.docs.get(params.textDocument.uri);
+  const document = documents.get(params.textDocument.uri);
+  if (!model || !document) {
+    return null;
+  }
+  const help = signatureHelp(document, params.position, (name) => {
+    const candidates = workspace.lookupByName(name);
+    const hit =
+      candidates.find((entry) => /Calculation|Action/.test(entry.sym.kind)) ?? candidates[0];
+    if (!hit) {
+      return undefined;
+    }
+    const openDocument = documents.get(hit.model.uri);
+    let source = openDocument?.getText();
+    if (!source) {
+      try {
+        source = fs.readFileSync(uriToFsPath(hit.model.uri), 'utf8');
+      } catch {
+        return undefined;
+      }
+    }
+    const owner = TextDocument.create(hit.model.uri, 'sysml', 1, source);
+    return { sym: hit.sym, text: owner.getText(hit.sym.range) };
+  });
+  return help ?? null;
 });
 
 connection.onHover((params) => {
