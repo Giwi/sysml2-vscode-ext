@@ -1,76 +1,47 @@
 import {
+  CodeActionKind,
   createConnection,
-  DiagnosticSeverity,
   DidChangeWatchedFilesNotification,
-  ErrorCodes,
   ProposedFeatures,
-  ResponseError,
-  SymbolKind,
-  TextDocuments,
   TextDocumentSyncKind,
+  TextDocuments,
 } from 'vscode-languageserver/node.js';
-import type {
-  CodeAction,
-  Diagnostic,
-  Location,
-  SymbolInformation,
-  TextEdit,
-} from 'vscode-languageserver/node.js';
-import { CodeActionKind } from 'vscode-languageserver/node.js';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseText } from './parser.js';
-import { refAtPosition, symbolAtPosition } from './model.js';
-import type { DocumentModel, LspRange, RefKind, SysmlSymbol } from './model.js';
 import { Workspace } from './workspace.js';
-import type { IndexedSymbol } from './workspace.js';
-import { formatText } from './format.js';
+import type { DocumentModel } from './model.js';
+import type { IndexProgress } from '../shared/protocol.js';
 import {
   SEMANTIC_TOKEN_MODIFIERS,
   SEMANTIC_TOKEN_TYPES,
-  foldingRanges,
-  inlayHints,
-  semanticTokens,
-  signatureHelp,
 } from './navigation.js';
-import type {
-  GraphEdge,
-  GraphNode,
-  IndexProgress,
-  ModelTreeNode,
-  TraceLink,
-  TraceTarget,
-  ValidationResult,
-} from '../shared/protocol.js';
-
-const KEYWORDS = [
-  'about', 'abstract', 'accept', 'action', 'actor', 'after', 'alias', 'all', 'allocate', 'allocation',
-  'analysis', 'and', 'as', 'assert', 'assign', 'assume', 'at', 'attribute', 'bind', 'binding', 'by',
-  'calc', 'case', 'comment', 'concern', 'connect', 'connection', 'connector', 'const', 'constant',
-  'constraint', 'crosses', 'decide', 'def', 'default', 'defined', 'dependency', 'derived', 'do',
-  'doc', 'else', 'end', 'entry', 'enum', 'event', 'exhibit', 'exit', 'expose', 'false', 'filter',
-  'first', 'flow', 'for', 'fork', 'frame', 'from', 'hastype', 'if', 'implies', 'import', 'in',
-  'include', 'individual', 'inout', 'interface', 'istype', 'item', 'join', 'language', 'library',
-  'locale', 'loop', 'merge', 'message', 'meta', 'metadata', 'new', 'nonunique', 'not', 'null',
-  'objective', 'occurrence', 'of', 'or', 'ordered', 'out', 'package', 'parallel', 'part', 'perform',
-  'port', 'private', 'protected', 'public', 'redefines', 'ref', 'references', 'render', 'rendering',
-  'rep', 'require', 'requirement', 'return', 'satisfy', 'send', 'snapshot', 'specializes',
-  'stakeholder', 'standard', 'state', 'subject', 'subsets', 'succession', 'terminate', 'then',
-  'timeslice', 'to', 'transition', 'true', 'until', 'use', 'variant', 'variation', 'verification',
-  'verify', 'via', 'view', 'viewpoint', 'when', 'while', 'xor',
-];
-
-// ---------------------------------------------------------------------------
-// Server wiring
-// ---------------------------------------------------------------------------
+import type { FeatureContext } from './features/context.js';
+import { registerDiagnostics, validateOpenDocuments } from './features/diagnostics.js';
+import { registerLanguageFeatures } from './features/language.js';
+import { registerRename } from './features/rename.js';
+import { registerCodeActions } from './features/codeActions.js';
+import { registerFormatting } from './features/formatting.js';
+import { registerNavigation } from './features/navigation.js';
+import { registerGraph } from './features/graph.js';
+import { registerModelTree } from './features/modelTree.js';
+import { registerTraceability } from './features/traceability.js';
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 const workspace = new Workspace();
 
-// Library indexing runs in the background. Track when a request last arrived so
-// the indexer can pause between files and answer it promptly.
+let libraryEnabled = true;
+let unresolvedWarnings = true;
+let maxGraphNodes = 300;
+let formatAlignMembers = false;
+let libraryPath = '';
+
+/**
+ * Library indexing runs in the background. Track when a request last arrived so
+ * the indexer can pause between files and answer it promptly.
+ */
 let lastRequestAt = 0;
 
 for (const method of [
@@ -92,17 +63,20 @@ for (const method of [
   };
 }
 
-let libraryEnabled = true;
-let unresolvedWarnings = true;
-let maxGraphNodes = 300;
-let formatAlignMembers = false;
-let libraryPath = '';
-
 function isLibraryUri(uri: string): boolean {
-  return libraryPath.length > 0 && uri.startsWith('file://') && decodeURIComponent(uri.slice(7)).startsWith(libraryPath);
+  return (
+    libraryPath.length > 0 &&
+    uri.startsWith('file://') &&
+    decodeURIComponent(uri.slice(7)).startsWith(libraryPath)
+  );
 }
 
-function updateDocument(uri: string, text: string, library: boolean, fast = false): DocumentModel {
+function updateDocument(
+  uri: string,
+  text: string,
+  library: boolean,
+  fast = false
+): DocumentModel {
   return workspace.update(uri, parseText(text, fast), library);
 }
 
@@ -110,24 +84,48 @@ function uriToFsPath(uri: string): string {
   return decodeURIComponent(uri.slice(7));
 }
 
-function fsPathToUri(p: string): string {
-  return 'file://' + encodeURI(p).replace(/#/g, '%23');
+function fsPathToUri(fsPath: string): string {
+  return 'file://' + encodeURI(fsPath).replace(/#/g, '%23');
 }
+
+/** Shared dependencies for the feature modules. */
+const featureContext: FeatureContext = {
+  connection,
+  documents,
+  workspace,
+  config: {
+    libraryEnabled: () => libraryEnabled,
+    unresolvedWarnings: () => unresolvedWarnings,
+    maxGraphNodes: () => maxGraphNodes,
+    formatAlignMembers: () => formatAlignMembers,
+    isLibraryUri,
+  },
+};
+
+registerDiagnostics(featureContext);
+registerLanguageFeatures(featureContext);
+registerRename(featureContext);
+registerCodeActions(featureContext);
+registerFormatting(featureContext);
+registerNavigation(featureContext);
+registerGraph(featureContext);
+registerModelTree(featureContext);
+registerTraceability(featureContext);
 
 async function loadLibrary(dir: string): Promise<void> {
   const files: string[] = [];
-  const walkDir = (d: string): void => {
+  const walkDir = (current: string): void => {
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(d, { withFileTypes: true });
+      entries = fs.readdirSync(current, { withFileTypes: true });
     } catch {
       return;
     }
-    for (const e of entries) {
-      const full = path.join(d, e.name);
-      if (e.isDirectory()) {
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
         walkDir(full);
-      } else if (/\.(sysml|kerml)$/i.test(e.name)) {
+      } else if (/\.(sysml|kerml)$/i.test(entry.name)) {
         files.push(full);
       }
     }
@@ -143,7 +141,7 @@ async function loadLibrary(dir: string): Promise<void> {
     // Give an in-flight request priority over the next library file.
     const deadline = Date.now() + 500;
     while (Date.now() - lastRequestAt < 120 && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 15));
+      await new Promise((resolve) => setTimeout(resolve, 15));
     }
     try {
       const text = fs.readFileSync(file, 'utf8');
@@ -156,7 +154,7 @@ async function loadLibrary(dir: string): Promise<void> {
       const progress: IndexProgress = { done: i + 1, total: files.length };
       connection.sendNotification('sysml/indexProgress', progress);
     }
-    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
 
@@ -166,165 +164,52 @@ async function scanWorkspaceFolders(): Promise<void> {
     return;
   }
   for (const folder of folders) {
-    if (folder.uri.startsWith('file://')) {
-      const root = uriToFsPath(folder.uri);
-      const files: string[] = [];
-      const walkDir = (d: string, depth: number): void => {
-        if (depth > 12) {
-          return;
-        }
-        let entries: fs.Dirent[];
-        try {
-          entries = fs.readdirSync(d, { withFileTypes: true });
-        } catch {
-          return;
-        }
-        for (const e of entries) {
-          if (e.name.startsWith('.') || e.name === 'node_modules') {
-            continue;
-          }
-          const full = path.join(d, e.name);
-          if (e.isDirectory()) {
-            // The bundled standard library is indexed separately and with a
-            // faster parser; scanning it here would parse it twice.
-            if (libraryPath && (full === libraryPath || full.startsWith(libraryPath + path.sep))) {
-              continue;
-            }
-            walkDir(full, depth + 1);
-          } else if (/\.(sysml|kerml)$/i.test(e.name)) {
-            files.push(full);
-          }
-        }
-      };
-      walkDir(root, 0);
-      for (const file of files) {
-        const uri = fsPathToUri(file);
-        if (documents.get(uri)) {
-          continue; // open documents are managed by TextDocuments
-        }
-        try {
-          updateDocument(uri, fs.readFileSync(file, 'utf8'), false);
-        } catch {
-          // ignore
-        }
-      }
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Diagnostics
-// ---------------------------------------------------------------------------
-
-function validate(model: DocumentModel): void {
-  const diagnostics: Diagnostic[] = [];
-
-  for (const err of model.errors) {
-    diagnostics.push({
-      range: {
-        start: { line: err.line, character: err.column },
-        end: { line: err.line, character: err.column + 1 },
-      },
-      severity: DiagnosticSeverity.Error,
-      source: 'sysml',
-      message: `Syntax error: ${err.message}`,
-    });
-  }
-
-  // Duplicate declarations are a local property of the file, so they are
-  // reported even when the standard library is not indexed.
-  const checkDuplicates = (sym: SysmlSymbol): void => {
-    const seen = new Map<string, SysmlSymbol>();
-    for (const child of sym.children) {
-      const prev = seen.get(child.name);
-      if (prev) {
-        diagnostics.push({
-          range: child.nameRange,
-          severity: DiagnosticSeverity.Error,
-          source: 'sysml',
-          message: `Duplicate declaration '${child.name}' (already declared as ${prev.kind.toLowerCase()})`,
-        });
-      } else {
-        seen.set(child.name, child);
-      }
-      checkDuplicates(child);
-    }
-  };
-  checkDuplicates(model.root);
-
-  // Unresolved-reference warnings need the library index: without it every
-  // standard-library type would look unresolved and flood the file.
-  if (unresolvedWarnings && libraryEnabled) {
-    const visit = (sym: SysmlSymbol): void => {
-      for (const ref of sym.refs) {
-        if (!ref.resolved && ref.kind !== 'dependency') {
-          diagnostics.push({
-            range: ref.range,
-            severity: DiagnosticSeverity.Warning,
-            source: 'sysml',
-            message: `Unresolved reference '${ref.text}'`,
-          });
-        }
-      }
-      for (const c of sym.children) {
-        visit(c);
-      }
-    };
-    visit(model.root);
-  }
-
-  connection.sendDiagnostics({ uri: model.uri, diagnostics });
-}
-
-function validateOpenDocuments(): void {
-  for (const doc of documents.all()) {
-    const model = workspace.docs.get(doc.uri);
-    if (model) {
-      workspace.resolveRefs(model);
-      validate(model);
-    }
-  }
-}
-
-documents.onDidOpen((e) => {
-  const model = updateDocument(e.document.uri, e.document.getText(), isLibraryUri(e.document.uri));
-  validate(model);
-});
-
-documents.onDidChangeContent((e) => {
-  const model = updateDocument(e.document.uri, e.document.getText(), isLibraryUri(e.document.uri));
-  validate(model);
-  connection.sendNotification('sysml/modelChanged', { uri: e.document.uri });
-});
-
-documents.onDidClose((e) => {
-  connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] });
-});
-
-connection.onDidChangeWatchedFiles(async (params) => {
-  for (const change of params.changes) {
-    const uri = change.uri;
-    if (documents.get(uri)) {
-      continue; // open docs are handled by TextDocuments
-    }
-    if (change.type === 3 /* Deleted */) {
-      workspace.remove(uri);
+    if (!folder.uri.startsWith('file://')) {
       continue;
     }
-    try {
-      const fsPath = uriToFsPath(uri);
-      updateDocument(uri, fs.readFileSync(fsPath, 'utf8'), isLibraryUri(uri));
-    } catch {
-      workspace.remove(uri);
+    const root = uriToFsPath(folder.uri);
+    const files: string[] = [];
+    const walkDir = (current: string, depth: number): void => {
+      if (depth > 12) {
+        return;
+      }
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(current, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') {
+          continue;
+        }
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          // The bundled standard library is indexed separately and with a
+          // faster parser; scanning it here would parse it twice.
+          if (libraryPath && (full === libraryPath || full.startsWith(libraryPath + path.sep))) {
+            continue;
+          }
+          walkDir(full, depth + 1);
+        } else if (/\.(sysml|kerml)$/i.test(entry.name)) {
+          files.push(full);
+        }
+      }
+    };
+    walkDir(root, 0);
+    for (const file of files) {
+      const uri = fsPathToUri(file);
+      if (documents.get(uri)) {
+        continue; // open documents are managed by TextDocuments
+      }
+      try {
+        updateDocument(uri, fs.readFileSync(file, 'utf8'), false);
+      } catch {
+        // ignore unreadable workspace files
+      }
     }
   }
-  validateOpenDocuments();
-  connection.sendNotification('sysml/modelChanged', { uri: '' });
-});
-
-// ---------------------------------------------------------------------------
-// LSP features
-// ---------------------------------------------------------------------------
+}
 
 connection.onInitialize((params) => {
   libraryPath = params.initializationOptions?.libraryPath ?? '';
@@ -343,7 +228,9 @@ connection.onInitialize((params) => {
       hoverProvider: true,
       documentFormattingProvider: true,
       renameProvider: { prepareProvider: true },
-      codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
+      codeActionProvider: {
+        codeActionKinds: [CodeActionKind.QuickFix, CodeActionKind.RefactorExtract],
+      },
       semanticTokensProvider: {
         legend: {
           tokenTypes: [...SEMANTIC_TOKEN_TYPES],
@@ -393,10 +280,10 @@ connection.onInitialized(() => {
     if (libraryEnabled && libraryPath) {
       // Let the first requests (opening a file, drawing the graph) through
       // before the background index starts competing for the event loop.
-      await new Promise((r) => setTimeout(r, 600));
+      await new Promise((resolve) => setTimeout(resolve, 600));
       await loadLibrary(libraryPath);
     }
-    validateOpenDocuments();
+    validateOpenDocuments(featureContext);
   })();
 });
 
@@ -414,1301 +301,8 @@ connection.onDidChangeConfiguration((change) => {
   if (typeof settings.format?.alignMembers === 'boolean') {
     formatAlignMembers = settings.format.alignMembers;
   }
-  validateOpenDocuments();
+  validateOpenDocuments(featureContext);
 });
-
-// --- Document symbols (outline / breadcrumbs) ---
-
-function toDocumentSymbols(symbols: SysmlSymbol[]): any[] {
-  return symbols.map((sym) => ({
-    name: sym.name,
-    detail: sym.kind,
-    kind: symbolKindOf(sym.kind),
-    range: sym.range,
-    selectionRange: sym.nameRange,
-    children: toDocumentSymbols(sym.children),
-  }));
-}
-
-function symbolKindOf(kind: string): SymbolKind {
-  switch (kind) {
-    case 'Package':
-    case 'Namespace':
-    case 'File':
-      return SymbolKind.Package;
-    case 'Part Definition':
-      return SymbolKind.Class;
-    case 'Item Definition':
-    case 'Attribute Definition':
-    case 'Port Definition':
-    case 'Interface Definition':
-      return SymbolKind.Struct;
-    case 'Enumeration':
-      return SymbolKind.Enum;
-    case 'Action Definition':
-    case 'Action':
-      return SymbolKind.Function;
-    case 'State Definition':
-    case 'State':
-      return SymbolKind.Event;
-    case 'Constraint Definition':
-    case 'Calculation Definition':
-      return SymbolKind.Object;
-    case 'Requirement Definition':
-    case 'Requirement':
-      return SymbolKind.Interface;
-    case 'Connector':
-    case 'Binding Connector':
-    case 'Succession':
-    case 'Flow':
-      return SymbolKind.Object;
-    default:
-      return SymbolKind.Field;
-  }
-}
-
-connection.onDocumentSymbol((params) => {
-  const model = workspace.docs.get(params.textDocument.uri);
-  if (!model) {
-    return [];
-  }
-  return toDocumentSymbols(model.symbols);
-});
-
-// --- Workspace symbol search (Ctrl+T) ---
-
-function fuzzyScore(query: string, target: string): number {
-  if (!query) {
-    return 1;
-  }
-  const q = query.toLowerCase();
-  const t = target.toLowerCase();
-  const idx = t.indexOf(q);
-  if (idx === 0) {
-    return 1000 - t.length;
-  }
-  if (idx > 0) {
-    return 500 - idx - t.length;
-  }
-  // subsequence fallback
-  let ti = 0;
-  let score = 100;
-  for (const ch of q) {
-    const found = t.indexOf(ch, ti);
-    if (found < 0) {
-      return 0;
-    }
-    score -= found - ti;
-    ti = found + 1;
-  }
-  return Math.max(score, 1);
-}
-
-connection.onWorkspaceSymbol((params) => {
-  const scored: { sym: SysmlSymbol; model: DocumentModel; score: number }[] = [];
-  for (const { sym, model } of workspace.allSymbols()) {
-    if (model.library) {
-      continue; // keep search focused on user files
-    }
-    const score = Math.max(fuzzyScore(params.query, sym.name), fuzzyScore(params.query, sym.qname));
-    if (score > 0) {
-      scored.push({ sym, model, score });
-    }
-  }
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 200).map(
-    ({ sym, model }): SymbolInformation => ({
-      name: sym.qname || sym.name,
-      kind: symbolKindOf(sym.kind),
-      containerName: sym.kind,
-      location: { uri: model.uri, range: sym.range },
-    })
-  );
-});
-
-// --- Definition / references / hover ---
-
-function locationOf(model: DocumentModel, sym: SysmlSymbol): any {
-  return { uri: model.uri, range: sym.nameRange };
-}
-
-connection.onDefinition((params) => {
-  const model = workspace.docs.get(params.textDocument.uri);
-  if (!model) {
-    return null;
-  }
-  const { line, character } = params.position;
-  const ref = refAtPosition(model, line, character);
-  if (ref?.resolved) {
-    return {
-      uri: ref.resolved.uri,
-      range: ref.resolved.selectionRange,
-    };
-  }
-  const sym = symbolAtPosition(model, line, character);
-  if (sym) {
-    return locationOf(model, sym);
-  }
-  return null;
-});
-
-connection.onReferences((params) => {
-  const model = workspace.docs.get(params.textDocument.uri);
-  if (!model) {
-    return [];
-  }
-  const { line, character } = params.position;
-
-  let targetId: string | undefined;
-  let targetQName: string | undefined;
-  let targetUri: string | undefined;
-
-  const ref = refAtPosition(model, line, character);
-  if (ref?.resolved) {
-    targetQName = ref.resolved.qname;
-    targetUri = ref.resolved.uri;
-  } else {
-    const sym = symbolAtPosition(model, line, character);
-    if (!sym) {
-      return [];
-    }
-    targetId = sym.id;
-    targetQName = sym.qname;
-    targetUri = model.uri;
-  }
-
-  const locations: Location[] = [];
-  for (const docModel of workspace.docs.values()) {
-    if (docModel.library) {
-      continue;
-    }
-    const visit = (sym: SysmlSymbol): void => {
-      if (sym.id === targetId) {
-        locations.push({ uri: docModel.uri, range: sym.nameRange });
-      }
-      for (const child of sym.children) {
-        visit(child);
-      }
-      for (const r of sym.refs) {
-        if (r.resolved && r.resolved.qname === targetQName && r.resolved.uri === targetUri) {
-          locations.push({ uri: docModel.uri, range: r.range });
-        }
-      }
-    };
-    visit(docModel.root);
-  }
-  return locations;
-});
-
-// --- Rename ---
-
-/** One `::`-separated segment of a reference, with character offsets in `text`. */
-interface RefSegment {
-  name: string;
-  start: number;
-  end: number;
-}
-
-/**
- * Split a reference into segments with exact offsets.
- *
- * Using the reference text (not the document) keeps this working for files that
- * are indexed from disk and therefore not open in an editor.
- */
-function refSegments(ref: { text: string }): RefSegment[] {
-  const text = ref.text;
-  const segments: RefSegment[] = [];
-  let cursor = 0;
-  for (const part of text.split('::')) {
-    const index = text.indexOf(part, cursor);
-    segments.push({ name: part, start: index, end: index + part.length });
-    cursor = index + part.length;
-  }
-  return segments;
-}
-
-/** Range of one segment inside a (single-line) reference range. */
-function segmentRange(ref: { range: LspRange }, segment: RefSegment): LspRange {
-  return {
-    start: { line: ref.range.start.line, character: ref.range.start.character + segment.start },
-    end: { line: ref.range.start.line, character: ref.range.start.character + segment.end },
-  };
-}
-
-/** The segment under the cursor, used by prepareRename. */
-function segmentAt(
-  ref: { range: LspRange; text: string },
-  line: number,
-  character: number
-): RefSegment | undefined {
-  if (line !== ref.range.start.line) {
-    return undefined;
-  }
-  const offset = character - ref.range.start.character;
-  return refSegments(ref).find((segment) => offset >= segment.start && offset <= segment.end);
-}
-
-/** Index of the segment that names the resolved symbol (the last match). */
-function targetSegmentIndex(ref: { text: string }, name: string): number {
-  const segments = refSegments(ref);
-  for (let i = segments.length - 1; i >= 0; i--) {
-    if (segments[i].name === name) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-/** True when the 0-based position falls inside the range (end exclusive). */
-function rangeContains(range: LspRange, line: number, character: number): boolean {
-  if (line < range.start.line || line > range.end.line) {
-    return false;
-  }
-  if (line === range.start.line && character < range.start.character) {
-    return false;
-  }
-  if (line === range.end.line && character >= range.end.character) {
-    return false;
-  }
-  return true;
-}
-
-/** Find a declaration by qualified name inside one document. */
-function symbolByQName(model: DocumentModel, qname: string): SysmlSymbol | undefined {
-  let found: SysmlSymbol | undefined;
-  const visit = (sym: SysmlSymbol): void => {
-    if (found) {
-      return;
-    }
-    if (sym.qname === qname) {
-      found = sym;
-      return;
-    }
-    for (const child of sym.children) {
-      visit(child);
-    }
-  };
-  visit(model.root);
-  return found;
-}
-
-/**
- * Refuse a rename that would collide with a sibling declaration. Namespaces
- * cannot contain two elements with the same name, so replacing the text would
- * only introduce a duplicate-declaration error.
- */
-function collisionError(declaration: SysmlSymbol | undefined, newName: string): string | undefined {
-  if (!declaration || !declaration.parent) {
-    return undefined;
-  }
-  const clash = declaration.parent.children.find(
-    (child) => child !== declaration && child.name === newName
-  );
-  if (!clash) {
-    return undefined;
-  }
-  const scope = declaration.parent.qname || 'the file root';
-  return `'${newName}' already exists in ${scope}`;
-}
-
-connection.onPrepareRename((params) => {
-  const model = workspace.docs.get(params.textDocument.uri);
-  if (!model) {
-    return null;
-  }
-  const { line, character } = params.position;
-
-  // A reference inside a declaration must win over the enclosing declaration.
-  const ref = refAtPosition(model, line, character);
-  if (ref?.resolved) {
-    if (ref.range.start.line !== ref.range.end.line) {
-      return null;
-    }
-    if (workspace.docs.get(ref.resolved.uri)?.library) {
-      return null; // the standard library is read-only
-    }
-    const segment = segmentAt(ref, line, character);
-    // Only the segment naming the resolved symbol can be renamed here.
-    if (!segment || segment.name !== ref.resolved.name) {
-      return null;
-    }
-    return { range: segmentRange(ref, segment), placeholder: segment.name };
-  }
-
-  const sym = symbolAtPosition(model, line, character);
-  if (sym && !sym.isFileRoot && rangeContains(sym.nameRange, line, character)) {
-    if (sym.library) {
-      return null; // the standard library is read-only
-    }
-    return { range: sym.nameRange, placeholder: sym.name };
-  }
-  return null;
-});
-
-connection.onRenameRequest((params) => {
-  const model = workspace.docs.get(params.textDocument.uri);
-  if (!model) {
-    return null;
-  }
-  const newName = params.newName;
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(newName)) {
-    throw new ResponseError(ErrorCodes.InvalidRequest, `'${newName}' is not a valid SysML name.`);
-  }
-
-  const { line, character } = params.position;
-  const ref = refAtPosition(model, line, character);
-  let targetId: string | undefined;
-  let targetQName: string | undefined;
-  let targetUri: string | undefined;
-  let targetName: string | undefined;
-
-  if (ref?.resolved) {
-    if (ref.range.start.line !== ref.range.end.line) {
-      return null;
-    }
-    if (workspace.docs.get(ref.resolved.uri)?.library) {
-      return null; // the standard library is read-only
-    }
-    const segment = segmentAt(ref, line, character);
-    // Renaming an intermediate qualifier is not supported: only the segment
-    // that actually names the resolved symbol is rewritten.
-    if (!segment || segment.name !== ref.resolved.name) {
-      return null;
-    }
-    targetName = ref.resolved.name;
-    targetQName = ref.resolved.qname;
-    targetUri = ref.resolved.uri;
-  } else {
-    const sym = symbolAtPosition(model, line, character);
-    if (!sym || sym.isFileRoot || sym.library) {
-      return null;
-    }
-    if (!rangeContains(sym.nameRange, line, character)) {
-      return null;
-    }
-    targetId = sym.id;
-    targetName = sym.name;
-    targetQName = sym.qname;
-    targetUri = model.uri;
-  }
-  if (!targetQName || !targetUri) {
-    return null;
-  }
-
-  // Locate the declaration to check for a name clash in its scope.
-  let declaration: SysmlSymbol | undefined;
-  if (targetId) {
-    declaration =
-      symbolByQName(model, targetQName) ?? symbolAtPosition(model, line, character);
-  } else {
-    const owner = workspace.docs.get(targetUri);
-    declaration = owner ? symbolByQName(owner, targetQName) : undefined;
-  }
-
-  const collision = collisionError(declaration, newName);
-  if (collision) {
-    throw new ResponseError(ErrorCodes.InvalidRequest, `Cannot rename: ${collision}.`);
-  }
-
-  const changes: Record<string, TextEdit[]> = {};
-  const addEdit = (uri: string, range: LspRange): void => {
-    (changes[uri] ??= []).push({ range, newText: newName });
-  };
-
-  for (const docModel of workspace.docs.values()) {
-    if (docModel.library) {
-      continue;
-    }
-    const visit = (sym: SysmlSymbol): void => {
-      if (sym.id === targetId) {
-        addEdit(docModel.uri, sym.nameRange);
-      }
-      for (const r of sym.refs) {
-        if (!r.resolved || r.resolved.qname !== targetQName || r.resolved.uri !== targetUri) {
-          continue;
-        }
-        if (r.range.start.line !== r.range.end.line) {
-          addEdit(docModel.uri, r.range);
-          continue;
-        }
-        // Replace only the segment that names the symbol, preserving any
-        // qualifier: `Q::Base` -> `Q::Root`, never `Root`.
-        const index = targetSegmentIndex(r, targetName!);
-        const segments = refSegments(r);
-        if (index < 0) {
-          addEdit(docModel.uri, r.range);
-        } else {
-          addEdit(docModel.uri, segmentRange(r, segments[index]));
-        }
-      }
-      for (const child of sym.children) {
-        visit(child);
-      }
-    };
-    visit(docModel.root);
-  }
-
-  return { changes };
-});
-
-// --- Code actions ---
-
-const SCALAR_TYPES = new Set([
-  'Real',
-  'Integer',
-  'Natural',
-  'Boolean',
-  'String',
-  'Rational',
-  'Complex',
-  'UnlimitedNatural',
-]);
-
-/** Insert an import at the top of the enclosing package, or of the file. */
-function importEdit(document: TextDocument, moduleName: string): TextEdit | undefined {
-  const text = document.getText();
-  if (new RegExp(`import\\s+${moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(text)) {
-    return undefined;
-  }
-  const lines = text.split(/\r?\n/);
-  for (let i = 0; i < Math.min(lines.length, 40); i++) {
-    const match = /^(\s*)(package|library package|namespace)\b[^{]*\{\s*$/.exec(lines[i]);
-    if (match) {
-      return {
-        range: { start: { line: i + 1, character: 0 }, end: { line: i + 1, character: 0 } },
-        newText: `${match[1]}    import ${moduleName}::*;\n`,
-      };
-    }
-  }
-  return {
-    range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
-    newText: `import ${moduleName}::*;\n`,
-  };
-}
-
-/** Position and indentation for a declaration at file scope (or package scope). */
-function fileScopeInsertion(document: TextDocument): { line: number; indent: string } {
-  const lines = document.getText().split(/\r?\n/);
-  for (let i = 0; i < Math.min(lines.length, 40); i++) {
-    const match = /^(\s*)(package|library package|namespace)\b[^{]*\{\s*$/.exec(lines[i]);
-    if (match) {
-      return { line: i + 1, indent: match[1] + '    ' };
-    }
-  }
-  return { line: 0, indent: '' };
-}
-
-/**
- * Declaration text for an unresolved reference.
- *
- * The reference kind tells us what the user was trying to name: a type or a
- * specialization needs a part definition, a `verify`/`satisfy` needs a
- * requirement, and an import needs a package.
- */
-function missingDeclaration(
-  kind: RefKind | undefined,
-  name: string
-): { label: string; text: string } {
-  switch (kind) {
-    case 'import':
-      return { label: 'package', text: `package ${name} {\n}` };
-    case 'verify':
-    case 'satisfy':
-      return { label: 'requirement definition', text: `requirement def ${name} {\n}` };
-    default:
-      return { label: 'part definition', text: `part def ${name} {\n}` };
-  }
-}
-
-/** Turn a comment body into a valid CamelCase requirement name. */
-function requirementNameFrom(comment: string): string {
-  const words = comment
-    .replace(/[^A-Za-z0-9 ]+/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 5);
-  let name = words.map((word) => word[0].toUpperCase() + word.slice(1)).join('');
-  if (!name) {
-    return 'ExtractedRequirement';
-  }
-  if (!/^[A-Za-z]/.test(name)) {
-    name = 'Requirement' + name;
-  }
-  return name;
-}
-
-/**
- * Position of the first line inside a declaration body.
- *
- * Verification cases keep their `verify` statements inside the `objective`
- * block, so callers can ask for that block explicitly.
- */
-function bodyInsertion(
-  document: TextDocument,
-  symbol: SysmlSymbol,
-  preferObjective = false
-): { line: number; character: number } {
-  const text = document.getText();
-  const start = document.offsetAt(symbol.range.start);
-  const end = document.offsetAt(symbol.range.end);
-  let searchFrom = start;
-  if (preferObjective) {
-    const objective = text.indexOf('objective', start);
-    if (objective >= 0 && objective < end) {
-      searchFrom = objective;
-    }
-  }
-  const open = text.indexOf('{', searchFrom);
-  if (open < 0 || open > end) {
-    return { line: symbol.range.end.line, character: 0 };
-  }
-  const position = document.positionAt(open);
-  const lineText = text.split(/\r?\n/)[position.line] ?? '';
-  const indent = /^\s*/.exec(lineText)?.[0] ?? '';
-  return { line: position.line + 1, character: indent.length + 2 };
-}
-
-function editDistance(a: string, b: string): number {  if (a === b) {
-    return 0;
-  }
-  if (Math.abs(a.length - b.length) > 2) {
-    return 3;
-  }
-  const prev = new Array(b.length + 1).fill(0).map((_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    let last = prev[0];
-    prev[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const tmp = prev[j];
-      prev[j] = Math.min(
-        prev[j] + 1,
-        prev[j - 1] + 1,
-        last + (a[i - 1] === b[j - 1] ? 0 : 1)
-      );
-      last = tmp;
-    }
-  }
-  return prev[b.length];
-}
-
-connection.onCodeAction((params) => {
-  const model = workspace.docs.get(params.textDocument.uri);
-  const document = documents.get(params.textDocument.uri);
-  if (!model || !document) {
-    return [];
-  }
-  const actions: CodeAction[] = [];
-
-  for (const diagnostic of params.context.diagnostics) {
-    const unresolved = /^Unresolved reference '(.+)'$/.exec(diagnostic.message);
-    if (!unresolved) {
-      continue;
-    }
-    const name = unresolved[1];
-    const lastSegment = name.split('::').pop() ?? name;
-
-    // 1. Exact standard-library symbol: import its owning package.
-    const libraryHit = workspace
-      .lookupByName(lastSegment)
-      .find((entry) => entry.model.library);
-    if (libraryHit) {
-      const owner = libraryHit.sym.parent?.qname || libraryHit.sym.qname.split('::')[0];
-      if (owner) {
-        const edit = importEdit(document, owner);
-        if (edit) {
-          actions.push({
-            title: `Import ${owner}`,
-            kind: CodeActionKind.QuickFix,
-            diagnostics: [diagnostic],
-            edit: { changes: { [model.uri]: [edit] } },
-          });
-        }
-      }
-    }
-
-    // 2. Scalar types live in ScalarValues, which is the common case.
-    if (SCALAR_TYPES.has(lastSegment) && !/import\s+ScalarValues/.test(document.getText())) {
-      const edit = importEdit(document, 'ScalarValues');
-      if (edit) {
-        actions.push({
-          title: 'Import ScalarValues',
-          kind: CodeActionKind.QuickFix,
-          diagnostics: [diagnostic],
-          edit: { changes: { [model.uri]: [edit] } },
-        });
-      }
-    }
-
-    // 3. Likely typo of a user declaration: offer the closest name.
-    let best: { name: string; distance: number } | undefined;
-    for (const candidate of workspace.allSymbols()) {
-      if (candidate.model.library || candidate.sym.name === lastSegment) {
-        continue;
-      }
-      const distance = editDistance(lastSegment.toLowerCase(), candidate.sym.name.toLowerCase());
-      if (distance <= 2 && (!best || distance < best.distance)) {
-        best = { name: candidate.sym.name, distance };
-      }
-    }
-    if (best) {
-      actions.push({
-        title: `Change to '${best.name}'`,
-        kind: CodeActionKind.QuickFix,
-        diagnostics: [diagnostic],
-        edit: {
-          changes: {
-            [model.uri]: [{ range: diagnostic.range, newText: best.name }],
-          },
-        },
-      });
-    }
-
-    // 4. Create the missing declaration, with the kind implied by the usage.
-    // Scalar types are a missing import, not a missing declaration.
-    if (!libraryHit && lastSegment && !SCALAR_TYPES.has(lastSegment)) {
-      const ref = refAtPosition(model, diagnostic.range.start.line, diagnostic.range.start.character);
-      const declaration = missingDeclaration(ref?.kind, lastSegment);
-      const scope = fileScopeInsertion(document);
-      actions.push({
-        title: `Create ${declaration.label} '${lastSegment}'`,
-        kind: CodeActionKind.QuickFix,
-        diagnostics: [diagnostic],
-        edit: {
-          changes: {
-            [model.uri]: [
-              {
-                range: {
-                  start: { line: scope.line, character: 0 },
-                  end: { line: scope.line, character: 0 },
-                },
-                newText: `${declaration.text.replace(/\n/g, '\n' + scope.indent)}\n\n`,
-              },
-            ],
-          },
-        },
-      });
-    }
-  }
-
-  // 5. Extract a requirement from a comment on the current line.
-  const lineText = document.getText().split(/\r?\n/)[params.range.start.line] ?? '';
-  const blockComment = /\/\*\s*(.*?)\s*\*\//.exec(lineText);
-  const lineComment = /\/\/\s*(.+)$/.exec(lineText);
-  const comment = blockComment?.[1] ?? lineComment?.[1];
-  if (comment && comment.trim().length > 3) {
-    const name = requirementNameFrom(comment);
-    const indent = /^\s*/.exec(lineText)?.[0] ?? '';
-    const text =
-      `${indent}requirement def ${name} {\n` +
-      `${indent}  doc /* ${comment.trim().replace(/\*\//g, '')} */\n` +
-      `${indent}}\n`;
-    actions.push({
-      title: `Extract requirement '${name}' from comment`,
-      kind: CodeActionKind.RefactorExtract,
-      edit: {
-        changes: {
-          [model.uri]: [
-            {
-              range: {
-                start: { line: params.range.start.line + 1, character: 0 },
-                end: { line: params.range.start.line + 1, character: 0 },
-              },
-              newText: text,
-            },
-          ],
-        },
-      },
-    });
-  }
-
-  // 6. Create an allocation that satisfies the requirement under the cursor.
-  const symbol = symbolAtPosition(model, params.range.start.line, params.range.start.character);
-  if (symbol && /Requirement/.test(symbol.kind) && !symbol.isFileRoot && !symbol.library) {
-    const indent = /^\s*/.exec(
-      document.getText().split(/\r?\n/)[symbol.range.start.line] ?? ''
-    )?.[0] ?? '';
-    const text =
-      `\n${indent}allocation def ${symbol.name}Satisfaction {\n` +
-      `${indent}  satisfy ${symbol.name};\n` +
-      `${indent}}\n`;
-    actions.push({
-      title: `Create allocation satisfying '${symbol.name}'`,
-      kind: CodeActionKind.RefactorExtract,
-      edit: {
-        changes: {
-          [model.uri]: [
-            {
-              range: {
-                start: { line: symbol.range.end.line + 1, character: 0 },
-                end: { line: symbol.range.end.line + 1, character: 0 },
-              },
-              newText: text,
-            },
-          ],
-        },
-      },
-    });
-  }
-
-  return actions;
-});
-
-// --- Formatting ---
-
-connection.onDocumentFormatting((params) => {
-  const document = documents.get(params.textDocument.uri);
-  if (!document) {
-    return [];
-  }
-  const text = document.getText();
-  const formatted = formatText(text, {
-    insertSpaces: params.options.insertSpaces,
-    tabSize: params.options.tabSize,
-    alignMembers: formatAlignMembers,
-  });
-  if (formatted === text) {
-    return [];
-  }
-  return [
-    {
-      range: {
-        start: { line: 0, character: 0 },
-        end: document.positionAt(text.length),
-      },
-      newText: formatted,
-    },
-  ];
-});
-
-// --- Navigation: semantic tokens, folding, inlay hints, signature help ---
-
-connection.languages.semanticTokens.on((params) => {
-  const model = workspace.docs.get(params.textDocument.uri);
-  return model ? semanticTokens(model) : { data: [] };
-});
-
-connection.onFoldingRanges((params) => {
-  const document = documents.get(params.textDocument.uri);
-  return document ? foldingRanges(document.getText()) : [];
-});
-
-connection.onRequest(
-  'textDocument/inlayHint',
-  (params: { textDocument: { uri: string } }) => {
-    const model = workspace.docs.get(params.textDocument.uri);
-    const document = documents.get(params.textDocument.uri);
-    return model && document ? inlayHints(model, document) : [];
-  }
-);
-
-connection.onSignatureHelp((params) => {
-  const model = workspace.docs.get(params.textDocument.uri);
-  const document = documents.get(params.textDocument.uri);
-  if (!model || !document) {
-    return null;
-  }
-  const help = signatureHelp(document, params.position, (name) => {
-    const candidates = workspace.lookupByName(name);
-    const hit =
-      candidates.find((entry) => /Calculation|Action/.test(entry.sym.kind)) ?? candidates[0];
-    if (!hit) {
-      return undefined;
-    }
-    const openDocument = documents.get(hit.model.uri);
-    let source = openDocument?.getText();
-    if (!source) {
-      try {
-        source = fs.readFileSync(uriToFsPath(hit.model.uri), 'utf8');
-      } catch {
-        return undefined;
-      }
-    }
-    const owner = TextDocument.create(hit.model.uri, 'sysml', 1, source);
-    return { sym: hit.sym, text: owner.getText(hit.sym.range) };
-  });
-  return help ?? null;
-});
-
-connection.onHover((params) => {
-  const model = workspace.docs.get(params.textDocument.uri);
-  if (!model) {
-    return null;
-  }
-  const { line, character } = params.position;
-
-  const ref = refAtPosition(model, line, character);
-  if (ref) {
-    if (ref.resolved) {
-      const lib = workspace.docs.get(ref.resolved.uri)?.library ? ' *(standard library)*' : '';
-      return {
-        contents: {
-          kind: 'markdown',
-          value: `**${ref.resolved.qname}** — ${ref.resolved.kind}${lib}\n\nReferenced as \`${ref.text}\` (${ref.kind})`,
-        },
-        range: ref.range,
-      };
-    }
-    return {
-      contents: {
-        kind: 'markdown',
-        value: `**${ref.text}** — unresolved ${ref.kind} reference`,
-      },
-      range: ref.range,
-    };
-  }
-
-  const sym = symbolAtPosition(model, line, character);
-  if (sym && !sym.isFileRoot) {
-    const parent = sym.parent && !sym.parent.isFileRoot ? ` in \`${sym.parent.qname}\`` : '';
-    return {
-      contents: {
-        kind: 'markdown',
-        value: `**${sym.name}** — ${sym.kind}${parent}\n\nQualified name: \`${sym.qname}\``,
-      },
-      range: sym.nameRange,
-    };
-  }
-  return null;
-});
-
-// --- Completion ---
-
-connection.onCompletion((params) => {
-  const model = workspace.docs.get(params.textDocument.uri);
-  const items: any[] = [];
-
-  for (const kw of KEYWORDS) {
-    items.push({ label: kw, kind: 14 /* Keyword */, detail: 'SysML keyword', sortText: `2_${kw}` });
-  }
-
-  if (model) {
-    const seen = new Set<string>();
-    const scope = symbolAtPosition(model, params.position.line, params.position.character) ?? model.root;
-
-    // Visible symbols: scope chain + file level + globals (workspace first).
-    const visible: IndexedSymbol[] = [];
-    let cur: SysmlSymbol | undefined = scope;
-    while (cur) {
-      for (const c of cur.children) {
-        visible.push({ sym: c, model });
-      }
-      cur = cur.parent;
-    }
-    for (const s of model.symbols) {
-      visible.push({ sym: s, model });
-    }
-    for (const entry of workspace.allSymbols()) {
-      if (!entry.model.library && entry.model !== model) {
-        visible.push(entry);
-      }
-    }
-
-    for (const { sym } of visible) {
-      if (seen.has(sym.name)) {
-        continue;
-      }
-      seen.add(sym.name);
-      items.push({
-        label: sym.name,
-        kind: completionItemKindOf(sym.kind),
-        detail: sym.kind,
-        sortText: `1_${sym.name}`,
-      });
-      if (items.length > 400) {
-        break;
-      }
-    }
-  }
-
-  return items;
-});
-
-function completionItemKindOf(kind: string): number {
-  switch (kind) {
-    case 'Package':
-    case 'Namespace':
-      return 9; // Module
-    case 'Enumeration':
-      return 13; // Enum
-    case 'Action':
-    case 'Action Definition':
-      return 3; // Function
-    default:
-      return 7; // Field
-  }
-}
-
-// --- Structural graph (custom request, rendered by the webview) ---
-
-/**
- * Payload for `sysml/graph`.
- *
- * Node ids are `uri#line:character`, which lets the webview jump back to a
- * declaration without a second request. `children` is a count, not a list:
- * the webview derives containment from the edges so the payload stays small.
- */
-/**
- * Containment tree plus cross-references for one document.
- *
- * The walk is bounded by `maxNodes` so a pathological file cannot freeze the
- * webview. Cross-reference targets are added only when they belong to a user
- * file: the standard library would add thousands of nodes for no benefit.
- */
-connection.onRequest('sysml/graph', (params: { uri: string; maxNodes?: number }) => {
-  const model = workspace.docs.get(params.uri);
-  if (!model) {
-    return null;
-  }
-  const limit = params.maxNodes ?? maxGraphNodes;
-  const nodes: GraphNode[] = [];
-  const edges: GraphEdge[] = [];
-  const nodeIds = new Set<string>();
-
-  const addNode = (sym: SysmlSymbol, depth: number): boolean => {
-    if (nodes.length >= limit) {
-      return false;
-    }
-    if (!nodeIds.has(sym.id)) {
-      nodeIds.add(sym.id);
-      const typing = sym.refs.find((r) => r.kind === 'typing');
-      nodes.push({
-        id: sym.id,
-        label: sym.name,
-        kind: sym.kind,
-        depth,
-        children: sym.children.length,
-        type: typing?.text,
-        multiplicity: sym.multiplicity,
-      });
-    }
-    return true;
-  };
-
-  const visit = (sym: SysmlSymbol, depth: number): void => {
-    if (!addNode(sym, depth)) {
-      return;
-    }
-    for (const child of sym.children) {
-      edges.push({ from: sym.id, to: child.id, kind: 'contains', label: '' });
-      visit(child, depth + 1);
-    }
-    for (const ref of sym.refs) {
-      if (!ref.resolved) {
-        continue;
-      }
-      const targetModel = workspace.docs.get(ref.resolved.uri);
-      const target = targetModel?.root.children.find((c) => c.qname === ref.resolved!.qname);
-      if (!target || targetModel?.library) {
-        continue;
-      }
-      addNode(target, depth);
-      edges.push({
-        from: sym.id,
-        to: target.id,
-        kind: ref.kind,
-        label: ref.kind === 'typing' ? 'typed by' : ref.kind === 'specializes' ? 'specializes' : ref.kind,
-      });
-    }
-  };
-
-  for (const sym of model.symbols) {
-    visit(sym, 0);
-  }
-
-  return { uri: model.uri, nodes, edges, truncated: nodes.length >= limit };
-});
-
-// --- Model Explorer tree ---
-
-function toModelTree(sym: SysmlSymbol, uri: string): ModelTreeNode {
-  return {
-    name: sym.name,
-    kind: sym.kind,
-    qname: sym.qname,
-    uri,
-    line: sym.nameRange.start.line,
-    character: sym.nameRange.start.character,
-    children: sym.children.map((c) => toModelTree(c, uri)),
-  };
-}
-
-/**
- * Whole-model outline for the Model Explorer: one root per user file, with the
- * declaration tree underneath. Standard library files are excluded because
- * they would dominate the tree.
- */
-connection.onRequest('sysml/modelTree', () => {
-  const files: ModelTreeNode[] = [];
-  for (const model of workspace.docs.values()) {
-    if (model.library || model.symbols.length === 0) {
-      continue;
-    }
-    files.push({
-      name: fileNameOf(model.uri),
-      kind: 'File',
-      qname: model.uri,
-      uri: model.uri,
-      line: 0,
-      character: 0,
-      children: model.symbols.map((sym) => toModelTree(sym, model.uri)),
-    });
-  }
-  files.sort((a, b) => a.name.localeCompare(b.name));
-  return files;
-});
-
-// --- Traceability: requirements <-> verification cases ---
-
-/**
- * Build the requirement/verification matrix.
- *
- * `verify X;` is now recorded as an explicit `verify` reference, so the matrix
- * no longer has to infer the link from a generic reference subsetting.
- */
-connection.onRequest('sysml/traceability', () => {
-  const requirements: TraceTarget[] = [];
-  const verifications: TraceTarget[] = [];
-  const links: TraceLink[] = [];
-
-  const toTarget = (sym: SysmlSymbol, uri: string): TraceTarget => ({
-    id: sym.id,
-    name: sym.name,
-    qname: sym.qname,
-    uri,
-    line: sym.nameRange.start.line,
-    character: sym.nameRange.start.character,
-  });
-
-  // First pass: every requirement, so links can be resolved regardless of
-  // declaration order between files.
-  for (const model of workspace.docs.values()) {
-    if (model.library) {
-      continue;
-    }
-    const visit = (sym: SysmlSymbol): void => {
-      if (/Requirement/.test(sym.kind)) {
-        requirements.push(toTarget(sym, model.uri));
-      }
-      for (const child of sym.children) {
-        visit(child);
-      }
-    };
-    visit(model.root);
-  }
-
-  for (const model of workspace.docs.values()) {    if (model.library) {
-      continue;
-    }
-    const visit = (sym: SysmlSymbol): void => {
-      if (/Verification/.test(sym.kind)) {
-        const target = toTarget(sym, model.uri);
-        const document = documents.get(model.uri);
-        if (document) {
-          const insertion = bodyInsertion(document, sym, true);
-          target.insertLine = insertion.line;
-          target.insertCharacter = insertion.character;
-          const body = document
-            .getText()
-            .slice(document.offsetAt(sym.range.start), document.offsetAt(sym.range.end));
-          target.needsObjective = !/\bobjective\b/.test(body);
-        }
-        verifications.push(target);
-        // Prefer the explicit `verify` reference. Older models, or a verify
-        // statement nested deeper, still expose it as a reference subsetting.
-        const explicit = sym.refs.filter((ref) => ref.kind === 'verify');
-        const candidates = explicit.length
-          ? explicit
-          : sym.refs.filter((ref) => ref.kind === 'subsets');
-        for (const ref of candidates) {
-          if (!ref.resolved || !/Requirement/.test(ref.resolved.kind)) {
-            continue;
-          }
-          const target = requirements.find(
-            (r) => r.qname === ref.resolved!.qname && r.uri === ref.resolved!.uri
-          );
-          if (
-            target &&
-            !links.some((l) => l.requirement === target.id && l.verification === sym.id)
-          ) {
-            links.push({
-              requirement: target.id,
-              verification: sym.id,
-              uri: model.uri,
-              line: ref.range.start.line,
-              character: ref.range.start.character,
-              endLine: ref.range.end.line,
-              endCharacter: ref.range.end.character,
-            });
-          }
-        }
-      }
-      for (const child of sym.children) {
-        visit(child);
-      }
-    };
-    visit(model.root);
-  }
-
-  return { requirements, verifications, links };
-});
-
-// --- Internal block diagram (`sysml/ibd`) ---
-
-/**
- * Internal block diagram for one part definition or usage.
- *
- * Parts become nodes, ports become border decorations, and `connect` statements
- * become labelled edges between the owning parts. The payload reuses the graph
- * shape so the same webview renderer can draw it.
- */
-connection.onRequest(
-  'sysml/ibd',
-  (params: { uri: string; qname?: string; line?: number; character?: number }) => {
-    const model = workspace.docs.get(params.uri);
-    if (!model) {
-      return null;
-    }
-
-    let context: SysmlSymbol | undefined;
-    if (params.qname) {
-      context = symbolByQName(model, params.qname);
-    }
-    if (!context && typeof params.line === 'number') {
-      // Declaration ranges start at the name, so a cursor on the leading
-      // keyword or indentation would fall back to the package. Match on the
-      // line span instead and keep the deepest definition.
-      const targetLine = params.line;
-      const visit = (symbol: SysmlSymbol): void => {
-        if (targetLine < symbol.range.start.line || targetLine > symbol.range.end.line) {
-          return;
-        }
-        if (!symbol.isFileRoot && /Definition$/.test(symbol.kind)) {
-          context = symbol;
-        }
-        for (const child of symbol.children) {
-          visit(child);
-        }
-      };
-      for (const symbol of model.symbols) {
-        visit(symbol);
-      }
-    }
-    if (!context) {
-      context =
-        model.symbols.find((symbol) => /Part Definition/.test(symbol.kind)) ?? model.symbols[0];
-    }
-    if (!context) {
-      return null;
-    }
-
-    const nodes: GraphNode[] = [];
-    const edges: GraphEdge[] = [];
-    const included = new Map<string, SysmlSymbol>();
-
-    /**
-     * Ports of a part: its own port children, or the ports of its type
-     * definition when the part only declares `part engine : Engine;`.
-     */
-    const portsOf = (symbol: SysmlSymbol): SysmlSymbol[] => {
-      const own = symbol.children.filter((child) => /Port/.test(child.kind));
-      if (own.length) {
-        return own;
-      }
-      const typing = symbol.refs.find((ref) => ref.kind === 'typing' && ref.resolved);
-      if (!typing?.resolved) {
-        return [];
-      }
-      const owner = workspace.docs.get(typing.resolved.uri);
-      const typeSymbol = owner ? symbolByQName(owner, typing.resolved.qname) : undefined;
-      return typeSymbol
-        ? typeSymbol.children.filter((child) => /Port/.test(child.kind))
-        : [];
-    };
-
-    const add = (symbol: SysmlSymbol, depth: number): void => {
-      if (included.has(symbol.id)) {
-        return;
-      }
-      included.set(symbol.id, symbol);
-      const typing = symbol.refs.find((ref) => ref.kind === 'typing');
-      nodes.push({
-        id: symbol.id,
-        label: symbol.name,
-        kind: symbol.kind,
-        depth,
-        children: symbol.children.length,
-        type: typing?.text,
-        multiplicity: symbol.multiplicity,
-        ports: portsOf(symbol).map((port) => ({
-          name: port.name,
-          type: port.refs.find((ref) => ref.kind === 'typing')?.text,
-        })),
-      });
-    };
-
-    const visit = (symbol: SysmlSymbol, depth: number): void => {
-      add(symbol, depth);
-      for (const child of symbol.children) {
-        if (/Port/.test(child.kind) || child.kind === 'File') {
-          continue;
-        }
-        edges.push({ from: symbol.id, to: child.id, kind: 'contains', label: '' });
-        visit(child, depth + 1);
-      }
-    };
-    visit(context, 0);
-
-    const byQName = new Map([...included.values()].map((symbol) => [symbol.qname, symbol]));
-    for (const connector of model.connectors) {
-      const owner = byQName.get(connector.ownerQname);
-      if (!owner) {
-        continue;
-      }
-      const fromPart = owner.children.find((child) => child.name === connector.from.owner);
-      const toPart = owner.children.find((child) => child.name === connector.to.owner);
-      if (!fromPart || !toPart) {
-        continue;
-      }
-      const hasPort = (part: SysmlSymbol, portName: string): boolean =>
-        portsOf(part).some((port) => port.name === portName);
-      if (!hasPort(fromPart, connector.from.port) || !hasPort(toPart, connector.to.port)) {
-        continue;
-      }
-      edges.push({
-        from: fromPart.id,
-        to: toPart.id,
-        kind: 'connection',
-        label: `${connector.from.port} \u2192 ${connector.to.port}`,
-      });
-    }
-
-    return { uri: model.uri, nodes, edges, truncated: false };
-  }
-);
-
-// --- Validation for AI-generated text (no workspace side effects) ---
-
-connection.onRequest('sysml/validate', (params: { text: string }): ValidationResult => {
-  if (typeof params?.text !== 'string') {
-    return { errors: [] };
-  }
-  try {
-    const result = parseText(params.text, false);
-    return { errors: result.errors };
-  } catch (error) {
-    return {
-      errors: [{ line: 0, column: 0, message: `Could not parse: ${String(error)}` }],
-    };
-  }
-});
-
-function fileNameOf(uri: string): string {
-  const slash = uri.lastIndexOf('/');
-  return slash >= 0 ? decodeURIComponent(uri.slice(slash + 1)) : uri;
-}
-
-// ---------------------------------------------------------------------------
 
 documents.listen(connection);
 connection.listen();

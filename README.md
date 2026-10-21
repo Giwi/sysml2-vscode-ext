@@ -234,21 +234,6 @@ Layout selection and image export (PNG, SVG) are available from the buttons in t
 3. `unit-tests`: `node:test` coverage for formatting, model extraction (multiplicity, explicit `verify` refs, symbol kinds) and AI code extraction.
 4. `lsp-e2e`: start `dist/server.js` over stdio and exercise `sysml/graph`, `sysml/traceability`, `sysml/validate`, formatting, rename and code actions.
 
-## Design notes
-
-- **Custom language server.** A TypeScript LSP server over stdio keeps the extension self-contained: no JVM, no external server binary. It uses `vscode-languageserver` and the official `antlr4` npm runtime.
-- **Grammar provenance.** `grammar/SysMLv2Parser.g4` and `SysMLv2Lexer.g4` are converted from the OMG KEBNF specification by [daltskin/sysml-v2-grammar](https://github.com/daltskin/sysml-v2-grammar) (MIT). See `grammar/ATTRIBUTION.md`. One local patch makes the `visibilityIndicator` in `importRule` optional, matching the specification.
-- **Fast library parsing.** The 94-file standard library is indexed with SLL prediction and `BailErrorStrategy` for speed, falling back to a full LL parse if prediction fails. Diagnostics are still computed with the full strategy for open documents.
-- **Responsive indexing.** The indexer parses one file per turn, pauses when an LSP request is pending, and reports progress to the status bar, so the graph and hover stay usable during the initial library scan.
-- **Shared protocol types.** `src/shared/protocol.ts` is imported by the language server, the extension host and the webview, so a payload change cannot silently desynchronise the two sides.
-- **Typed webview.** `src/webview/graph.ts` is compiled by esbuild to `media/graph.js`; the diagram is plain SVG with no third-party runtime.
-- **Split graph module.** `graph/session.ts` owns payloads and webview messages, `graph/html.ts` the webview shell, `graph/dot.ts` the Graphviz export, and `graphView.ts` only hosts the editor-area panel.
-- **Explicit traceability links.** `verify` and `satisfy` statements are recorded as their own reference kinds instead of being inferred from generic subsetting.
-- **Block definition diagram.** Blocks are drawn as SysML rectangles with a stereotype line, a name and compartments for parts, attributes, ports, actions, states and requirements. Relationships use standard notation: filled diamond for composition, hollow triangle for generalization, open arrow for typing and dependency. The renderer is plain SVG with no third-party library, so the diagram is exportable as true vector graphics.
-- **Layouts.** Tree, force, circle and grid are computed directly in the webview. The tree layout uses containment edges only, otherwise cross-references would flatten the hierarchy.
-- **One graph, one host.** The panel is owned by `SysmlGraphPanel` with a shared `GraphSession` that handles graph fetching and webview messages. Views are registered at the very start of `activate`, before the language server starts.
-- **ANTLR runtime quirks.** The JS runtime exposes `Token.column`, `ParserRuleContext.parentCtx`, `_errHandler` and `_interp.predictionMode`; the TypeScript definitions are incomplete, so a few narrow casts are used. The ESM build of `antlr4` uses `import.meta`, so `esbuild.mjs` aliases the package to its CJS distribution.
-
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
