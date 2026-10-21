@@ -18,6 +18,7 @@ The extension ships its own TypeScript language server built on an ANTLR4 parser
 | Model Explorer | Tree view listing elements by file, following the containment hierarchy |
 | Graph layouts and export | Layered, force, circle and grid layouts, plus PNG and SVG image export |
 | Graph exploration | Search, kind filter, zoom and fit, selection details, in a full-width panel |
+| Internal block diagram | Parts inside their context, ports on part borders, and `connect` statements drawn as labelled connectors |
 | UML blocks | Stereotype header, compartments with `name : Type [multiplicity]`, ports drawn on the block border |
 | Traceability matrix | Requirements against verification cases, with unverified requirements called out |
 | Rename | Rename a declaration and every resolved reference, across files |
@@ -128,6 +129,10 @@ Both buttons open a save dialog and export the whole diagram, not just the visib
 
 Format on save uses VS Code's own `editor.formatOnSave` setting: the extension advertises `documentFormattingProvider`, so the built-in save hook calls the formatter. Formatting is idempotent, so a second pass on an already formatted file returns no edits.
 
+### Internal Block Diagram panel
+
+**SysML: Open Internal Block Diagram** shows the part definition or usage under the cursor as an internal block diagram, in the same editor-area panel as the structure graph. Parts become blocks inside the context, ports are drawn on the part borders, and each `connect a.p1 to b.p2;` becomes a labelled connector between the two parts. Ports are looked up on the part's type definition when the part only declares `part engine : Engine;`.
+
 ### AI assistance
 
 The extension integrates with the editor's native language model API (`vscode.lm`) and the chat participant API, so no separate service or API key is required. Install and sign in to a chat provider such as GitHub Copilot; the commands report a clear message when no model is available.
@@ -199,6 +204,7 @@ git push origin v0.1.0
 |---------|-------------|
 | `SysML: Refresh Model Explorer` | Re-request the element tree from the language server |
 | `SysML: Open Structure Graph Panel` | Open the graph in a full-width editor-area panel |
+| `SysML: Open Internal Block Diagram` | Open the IBD for the part definition under the cursor |
 | `SysML: Open Traceability Matrix` | Open the requirements / verification matrix |
 | `SysML: Refresh Structure Graph` | Re-request the graph for the active editor |
 | `SysML: Export Structure Graph as DOT` | Save the current graph as a Graphviz `.dot` file |

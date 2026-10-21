@@ -149,6 +149,15 @@ text {
   pointer-events: none;
 }
 
+.edge-label {
+  font-size: 9px;
+  paint-order: stroke;
+  stroke: #1e1e1e;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
 /* --- details panel --- */
 
 #details {

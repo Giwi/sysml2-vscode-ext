@@ -160,6 +160,11 @@
         "icon": "$(graph)"
       },
       {
+        "command": "sysml.openIbd",
+        "title": "SysML: Open Internal Block Diagram",
+        "icon": "$(circuit-board)"
+      },
+      {
         "command": "sysml.openTraceability",
         "title": "SysML: Open Traceability Matrix",
         "icon": "$(checklist)"
@@ -212,6 +217,11 @@
           "group": "navigation"
         },
         {
+          "command": "sysml.openIbd",
+          "when": "resourceLangId == sysml || resourceLangId == kerml",
+          "group": "navigation"
+        },
+        {
           "command": "sysml.openTraceability",
           "when": "resourceLangId == sysml || resourceLangId == kerml",
           "group": "navigation"
@@ -257,6 +267,11 @@
         },
         {
           "command": "sysml.openGraphPanel",
+          "when": "view == sysml.modelExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "sysml.openIbd",
           "when": "view == sysml.modelExplorer",
           "group": "navigation"
         },

@@ -1542,6 +1542,140 @@ connection.onRequest('sysml/traceability', () => {
   return { requirements, verifications, links };
 });
 
+// --- Internal block diagram (`sysml/ibd`) ---
+
+/**
+ * Internal block diagram for one part definition or usage.
+ *
+ * Parts become nodes, ports become border decorations, and `connect` statements
+ * become labelled edges between the owning parts. The payload reuses the graph
+ * shape so the same webview renderer can draw it.
+ */
+connection.onRequest(
+  'sysml/ibd',
+  (params: { uri: string; qname?: string; line?: number; character?: number }) => {
+    const model = workspace.docs.get(params.uri);
+    if (!model) {
+      return null;
+    }
+
+    let context: SysmlSymbol | undefined;
+    if (params.qname) {
+      context = symbolByQName(model, params.qname);
+    }
+    if (!context && typeof params.line === 'number') {
+      // Declaration ranges start at the name, so a cursor on the leading
+      // keyword or indentation would fall back to the package. Match on the
+      // line span instead and keep the deepest definition.
+      const targetLine = params.line;
+      const visit = (symbol: SysmlSymbol): void => {
+        if (targetLine < symbol.range.start.line || targetLine > symbol.range.end.line) {
+          return;
+        }
+        if (!symbol.isFileRoot && /Definition$/.test(symbol.kind)) {
+          context = symbol;
+        }
+        for (const child of symbol.children) {
+          visit(child);
+        }
+      };
+      for (const symbol of model.symbols) {
+        visit(symbol);
+      }
+    }
+    if (!context) {
+      context =
+        model.symbols.find((symbol) => /Part Definition/.test(symbol.kind)) ?? model.symbols[0];
+    }
+    if (!context) {
+      return null;
+    }
+
+    const nodes: GraphNode[] = [];
+    const edges: GraphEdge[] = [];
+    const included = new Map<string, SysmlSymbol>();
+
+    /**
+     * Ports of a part: its own port children, or the ports of its type
+     * definition when the part only declares `part engine : Engine;`.
+     */
+    const portsOf = (symbol: SysmlSymbol): SysmlSymbol[] => {
+      const own = symbol.children.filter((child) => /Port/.test(child.kind));
+      if (own.length) {
+        return own;
+      }
+      const typing = symbol.refs.find((ref) => ref.kind === 'typing' && ref.resolved);
+      if (!typing?.resolved) {
+        return [];
+      }
+      const owner = workspace.docs.get(typing.resolved.uri);
+      const typeSymbol = owner ? symbolByQName(owner, typing.resolved.qname) : undefined;
+      return typeSymbol
+        ? typeSymbol.children.filter((child) => /Port/.test(child.kind))
+        : [];
+    };
+
+    const add = (symbol: SysmlSymbol, depth: number): void => {
+      if (included.has(symbol.id)) {
+        return;
+      }
+      included.set(symbol.id, symbol);
+      const typing = symbol.refs.find((ref) => ref.kind === 'typing');
+      nodes.push({
+        id: symbol.id,
+        label: symbol.name,
+        kind: symbol.kind,
+        depth,
+        children: symbol.children.length,
+        type: typing?.text,
+        multiplicity: symbol.multiplicity,
+        ports: portsOf(symbol).map((port) => ({
+          name: port.name,
+          type: port.refs.find((ref) => ref.kind === 'typing')?.text,
+        })),
+      });
+    };
+
+    const visit = (symbol: SysmlSymbol, depth: number): void => {
+      add(symbol, depth);
+      for (const child of symbol.children) {
+        if (/Port/.test(child.kind) || child.kind === 'File') {
+          continue;
+        }
+        edges.push({ from: symbol.id, to: child.id, kind: 'contains', label: '' });
+        visit(child, depth + 1);
+      }
+    };
+    visit(context, 0);
+
+    const byQName = new Map([...included.values()].map((symbol) => [symbol.qname, symbol]));
+    for (const connector of model.connectors) {
+      const owner = byQName.get(connector.ownerQname);
+      if (!owner) {
+        continue;
+      }
+      const fromPart = owner.children.find((child) => child.name === connector.from.owner);
+      const toPart = owner.children.find((child) => child.name === connector.to.owner);
+      if (!fromPart || !toPart) {
+        continue;
+      }
+      const hasPort = (part: SysmlSymbol, portName: string): boolean =>
+        portsOf(part).some((port) => port.name === portName);
+      if (!hasPort(fromPart, connector.from.port) || !hasPort(toPart, connector.to.port)) {
+        continue;
+      }
+      edges.push({
+        from: fromPart.id,
+        to: toPart.id,
+        kind: 'connection',
+        label: `${connector.from.port} \u2192 ${connector.to.port}`,
+      });
+    }
+
+    return { uri: model.uri, nodes, edges, truncated: false };
+  }
+);
+
 // --- Validation for AI-generated text (no workspace side effects) ---
 
 connection.onRequest('sysml/validate', (params: { text: string }): ValidationResult => {

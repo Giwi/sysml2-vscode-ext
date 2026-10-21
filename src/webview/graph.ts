@@ -53,7 +53,9 @@ interface ModelEdge {
   from: ModelNode;
   to: ModelNode;
   kind: string;
+  label?: string;
   el?: SVGPathElement;
+  labelEl?: SVGTextElement;
 }
 
 interface Point {
@@ -108,6 +110,7 @@ const EDGE_COLORS: Record<string, string> = {
   import: '#4f9a6e',
   dependency: '#777d87',
   alias: '#9aa0a6',
+  connection: '#c58a3a',
 };
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -276,7 +279,22 @@ function buildModel(data: GraphData): void {
       multiplicity: node.multiplicity,
       depth: depths.get(node.id) || 0,
       kids: [],
-      ports: [],
+      // Ports can be sent as decorations (IBD) or as contained symbols (BDD).
+      ports: (node.ports ?? []).map((port) => ({
+        id: `${node.id}:${port.name}`,
+        name: port.name,
+        kind: 'Port',
+        type: port.type,
+        depth: 0,
+        kids: [],
+        ports: [],
+        compartments: [],
+        w: 0,
+        h: 0,
+        x: 0,
+        y: 0,
+        el: null,
+      })),
       compartments: [],
       w: 150,
       h: 40,
@@ -309,7 +327,7 @@ function buildModel(data: GraphData): void {
     if (!from || !to || from === to) {
       continue;
     }
-    model.edges.push({ from, to, kind: edge.kind });
+    model.edges.push({ from, to, kind: edge.kind, label: edge.label || undefined });
   }
 }
 
@@ -331,7 +349,10 @@ function featureText(feature: ModelNode): string {
 /** Compute the block size from its header, ports and compartment rows. */
 function sizeNode(node: ModelNode): void {
   // Ports are drawn on the block border, not as compartment rows.
-  node.ports = node.kids.filter((kid) => /Port/.test(kid.kind));
+  const kidPorts = node.kids.filter((kid) => /Port/.test(kid.kind));
+  if (kidPorts.length) {
+    node.ports = kidPorts;
+  }
 
   const groups = new Map<string, ModelNode[]>();
   for (const kid of node.kids) {
@@ -609,9 +630,12 @@ function drawEdges(): void {
       fill: 'none',
       stroke: color,
       'stroke-width': edge.kind === 'contains' ? 1.4 : 1.2,
-      'marker-end': markerFor(edge.kind),
       opacity: edge.kind === 'contains' ? 0.75 : 0.95,
     };
+    const marker = markerFor(edge.kind);
+    if (marker) {
+      attrs['marker-end'] = marker;
+    }
     if (dashed) {
       attrs['stroke-dasharray'] = '4 3';
     }
@@ -622,12 +646,27 @@ function drawEdges(): void {
     const path = el('path', attrs) as SVGPathElement;
     edge.el = path;
     fragment.appendChild(path);
+
+    if (edge.label) {
+      // Connector labels name the two ports: `power -> power`.
+      const label = el('text', {
+        class: 'edge-label',
+        'text-anchor': 'middle',
+        fill: '#b0b6bd',
+      }) as SVGTextElement;
+      label.textContent = edge.label;
+      edge.labelEl = label;
+      fragment.appendChild(label);
+    }
   }
   edgeLayer.appendChild(fragment);
 }
 
 function markerFor(kind: string): string {
   switch (kind) {
+    case 'contains':
+    case 'connection':
+      return '';
     case 'specializes':
     case 'subsets':
     case 'redefines':
@@ -671,6 +710,14 @@ function applyPositions(): void {
     const mx = (start.x + end.x) / 2 - dy * bend;
     const my = (start.y + end.y) / 2 + dx * bend;
     edge.el.setAttribute('d', `M ${start.x} ${start.y} Q ${mx} ${my} ${end.x} ${end.y}`);
+
+    if (edge.labelEl) {
+      // Quadratic midpoint: 0.25*start + 0.5*control + 0.25*end.
+      const lx = 0.25 * start.x + 0.5 * mx + 0.25 * end.x;
+      const ly = 0.25 * start.y + 0.5 * my + 0.25 * end.y;
+      edge.labelEl.setAttribute('x', String(lx));
+      edge.labelEl.setAttribute('y', String(ly - 5));
+    }
   }
 }
 
@@ -1135,6 +1182,7 @@ function exportStyles(): string {
     .compartment { font-size: 9px; font-style: italic; }
     .row { font-size: 10px; }
     .more { font-style: italic; }
+    .edge-label { font-size: 9px; paint-order: stroke; stroke: #1e1e1e; stroke-width: 3px; }
     .selected .block { stroke: #ffffff; stroke-width: 2; }
   `;
 }

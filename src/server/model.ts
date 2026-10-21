@@ -79,6 +79,24 @@ export interface DocumentModel {
   /** Top-level symbols (children of root). */
   symbols: SysmlSymbol[];
   errors: SyntaxErrorInfo[];
+  /** `connect a.p to b.p;` statements, used by the internal block diagram. */
+  connectors: Connector[];
+}
+
+/** One end of a connector: the owning part and the port on it. */
+export interface ConnectorEnd {
+  owner: string;
+  port: string;
+  range: LspRange;
+}
+
+/** A binary connector declared inside a part definition or usage. */
+export interface Connector {
+  from: ConnectorEnd;
+  to: ConnectorEnd;
+  /** Qualified name of the enclosing part, used to scope the diagram. */
+  ownerQname: string;
+  range: LspRange;
 }
 
 // ---------------------------------------------------------------------------
@@ -418,7 +436,63 @@ export function buildDocumentModel(uri: string, parse: ParseResult, library: boo
     library,
     isFileRoot: true,
   };
-  const model: DocumentModel = { uri, library, root, symbols: [], errors: parse.errors };
+  const model: DocumentModel = {
+    uri,
+    library,
+    root,
+    symbols: [],
+    errors: parse.errors,
+    connectors: [],
+  };
+
+  /** All descendant contexts with a given rule name. */
+  function descendantContexts(ctx: ParserRuleContext, name: string): ParserRuleContext[] {
+    const out: ParserRuleContext[] = [];
+    const visit = (node: ParserRuleContext): void => {
+      for (let i = 0; i < node.getChildCount(); i++) {
+        const child = node.getChild(i);
+        if (!isParserRuleContext(child)) {
+          continue;
+        }
+        if (ruleName(child) === name) {
+          out.push(child);
+        }
+        visit(child);
+      }
+    };
+    visit(ctx);
+    return out;
+  }
+
+  /** Qualified names inside a connector end, in declaration order. */
+  function connectorEndOf(ctx: ParserRuleContext): ConnectorEnd | undefined {
+    const names = descendantContexts(ctx, 'qualifiedName');
+    if (names.length < 2) {
+      return undefined;
+    }
+    return {
+      owner: qnText(names[0]),
+      port: qnText(names[1]),
+      range: tokenRange(ctx),
+    };
+  }
+
+  /**
+   * Extract a binary connector from a `connectionUsage`.
+   * The grammar nests two `connectorEnd` members under `binaryConnectorPart`.
+   */
+  function extractConnector(ctx: ParserRuleContext, ownerQname: string): void {
+    const ends = descendantContexts(ctx, 'connectorEnd');
+    if (ends.length < 2) {
+      return;
+    }
+    const from = connectorEndOf(ends[0]);
+    const to = connectorEndOf(ends[1]);
+    if (!from || !to) {
+      return;
+    }
+    model.connectors.push({ from, to, ownerQname, range: tokenRange(ctx) });
+  }
 
   function makeSymbol(ctx: ParserRuleContext, rule: string, parent: SysmlSymbol): SysmlSymbol | undefined {
     const ident = identificationOf(ctx);
@@ -546,6 +620,10 @@ export function buildDocumentModel(uri: string, parse: ParseResult, library: boo
 
   function walk(ctx: ParserRuleContext, scope: SysmlSymbol | undefined): void {
     const rule = ruleName(ctx);
+
+    if (rule === 'connectionUsage') {
+      extractConnector(ctx, scope?.qname ?? root.qname);
+    }
 
     if (isDeclRule(rule)) {
       const sym = makeSymbol(ctx, rule, scope ?? root);

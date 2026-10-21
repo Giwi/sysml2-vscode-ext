@@ -17,6 +17,8 @@ export interface GraphNode {
   type?: string;
   /** Declared multiplicity without brackets, e.g. `4`. */
   multiplicity?: string;
+  /** Ports on the block border, used by the internal block diagram. */
+  ports?: { name: string; type?: string }[];
 }
 
 export interface GraphEdge {

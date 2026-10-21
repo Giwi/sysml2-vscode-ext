@@ -458,6 +458,49 @@ async function main(): Promise<void> {
   assert.equal(help.result.activeParameter, 1, 'cursor is on the second argument');
   console.log('ok signature help:', signature.label);
 
+  // Internal block diagram: parts, ports and connectors.
+  const ibdText = [
+    'package P {',
+    '  part def Engine {',
+    '    port power : PowerPort;',
+    '  }',
+    '  part def Wheels {',
+    '    port power : PowerPort;',
+    '  }',
+    '  part def Vehicle {',
+    '    part engine : Engine;',
+    '    part wheels : Wheels;',
+    '    connect engine.power to wheels.power;',
+    '  }',
+    '}',
+    '',
+  ].join('\n');
+  const ibdUri = 'file://' + path.resolve('/tmp/sysml-e2e-ibd.sysml');
+  notify('textDocument/didOpen', {
+    textDocument: { uri: ibdUri, languageId: 'sysml', version: 1, text: ibdText },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const ibdValidation = await send('sysml/validate', { text: ibdText });
+  assert.equal((ibdValidation.result?.errors ?? []).length, 0, 'IBD sample parses');
+  const vehicleLine = ibdText.split('\n').findIndex((line) => line.includes('part def Vehicle'));
+  assert.ok(vehicleLine >= 0, 'Vehicle declaration found');
+  const ibd = await send('sysml/ibd', { uri: ibdUri, line: vehicleLine, character: 2 });
+  assert.ok(ibd.result, 'IBD payload exists');
+  const ibdLabels = (ibd.result.nodes ?? []).map((node: any) => node.label);
+  assert.equal(ibd.result.nodes[0]?.label, 'Vehicle', 'IBD is scoped to the part definition');
+  assert.ok(ibdLabels.includes('Vehicle'), 'context is included');
+  assert.ok(ibdLabels.includes('engine'), 'part engine is included');
+  assert.ok(ibdLabels.includes('wheels'), 'part wheels is included');
+  assert.ok(!ibdLabels.includes('power'), 'ports are decorations, not nodes');
+  const engineNode = (ibd.result.nodes ?? []).find((node: any) => node.label === 'engine');
+  assert.equal(engineNode?.ports?.[0]?.name, 'power', 'engine exposes its port');
+  const connectionEdge = (ibd.result.edges ?? []).find(
+    (edge: any) => edge.kind === 'connection'
+  );
+  assert.ok(connectionEdge, 'connector edge exists');
+  assert.match(connectionEdge.label, /power/, 'connector names its ports');
+  console.log('ok IBD:', ibd.result.nodes.length, 'nodes,', connectionEdge.label);
+
   proc.kill();
   console.log('LSP E2E PASSED');
 }

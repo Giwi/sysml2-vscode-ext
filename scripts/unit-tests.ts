@@ -111,3 +111,24 @@ test('navigation: folds brace regions and comment blocks', () => {
   assert.ok(ranges.some((range) => range.kind === 'region'), 'brace region');
   assert.ok(ranges.some((range) => range.kind === 'comment'), 'comment block');
 });
+
+test('model: extracts connect statements for the IBD', () => {
+  const text = [
+    'package P {',
+    '  part def Vehicle {',
+    '    part engine : Engine;',
+    '    part wheels : Wheels;',
+    '    connect engine.power to wheels.power;',
+    '  }',
+    '}',
+    '',
+  ].join('\n');
+  const model = buildDocumentModel('file:///connect.sysml', parseText(text, false), false);
+  assert.equal(model.connectors.length, 1, 'one connector');
+  const connector = model.connectors[0];
+  assert.equal(connector.from.owner, 'engine');
+  assert.equal(connector.from.port, 'power');
+  assert.equal(connector.to.owner, 'wheels');
+  assert.equal(connector.to.port, 'power');
+  assert.equal(connector.ownerQname, 'P::Vehicle');
+});

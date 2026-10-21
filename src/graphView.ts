@@ -49,11 +49,22 @@ export class GraphSession {
   private refreshTimer: NodeJS.Timeout | undefined;
   /** Last document we drew; survives focus moving to the graph panel. */
   private lastGraphUri: string | undefined;
+  /** Which diagram the panel currently shows. */
+  private mode: 'bdd' | 'ibd' = 'bdd';
 
   constructor(
     readonly context: vscode.ExtensionContext,
     private readonly getClient: () => LanguageClient | undefined
   ) {}
+
+  /** Switch between the block definition and internal block diagrams. */
+  setMode(mode: 'bdd' | 'ibd'): void {
+    this.mode = mode;
+  }
+
+  getMode(): 'bdd' | 'ibd' {
+    return this.mode;
+  }
 
   /** Debounced refresh, used for model-change notifications. */
   scheduleRefresh(webviews: () => vscode.Webview[]): void {
@@ -94,19 +105,26 @@ export class GraphSession {
     if (!client) {
       return undefined;
     }
-    interface GraphRequest {
-      uri: string;
-      maxNodes: number;
-    }
     const cfg = vscode.workspace.getConfiguration('sysml');
-    const request: GraphRequest = {
-      uri,
-      maxNodes: cfg.get<number>('graph.maxNodes', 300),
-    };
+    const active = vscode.window.activeTextEditor;
+    const cursor =
+      active && active.document.uri.toString() === uri ? active.selection.active : undefined;
+
     try {
-      return await client.sendRequest<GraphData>('sysml/graph', request);
+      if (this.mode === 'ibd') {
+        // The IBD is scoped to the part definition under the cursor.
+        return await client.sendRequest<GraphData>('sysml/ibd', {
+          uri,
+          line: cursor?.line,
+          character: cursor?.character,
+        });
+      }
+      return await client.sendRequest<GraphData>('sysml/graph', {
+        uri,
+        maxNodes: cfg.get<number>('graph.maxNodes', 300),
+      });
     } catch (err) {
-      void vscode.window.showWarningMessage(`SysML: could not build the graph: ${err}`);
+      void vscode.window.showWarningMessage(`SysML: could not build the diagram: ${err}`);
       return undefined;
     }
   }
@@ -318,16 +336,20 @@ export class SysmlGraphPanel {
     return this.panel?.visible ? [this.panel.webview] : [];
   }
 
-  /** Show the panel, creating or revealing it. */
-  show(): void {
+  /** Show the panel, creating or revealing it, in the requested diagram mode. */
+  show(mode: 'bdd' | 'ibd' = 'bdd'): void {
+    this.session.setMode(mode);
+    const title =
+      mode === 'ibd' ? 'SysML Internal Block Diagram' : 'SysML Structure Graph';
     if (this.panel) {
+      this.panel.title = title;
       this.panel.reveal(vscode.ViewColumn.Beside);
       void this.session.refreshOne(this.panel.webview);
       return;
     }
     this.panel = vscode.window.createWebviewPanel(
       SysmlGraphPanel.viewType,
-      'SysML Structure Graph',
+      title,
       vscode.ViewColumn.Beside,
       {
         enableScripts: true,
