@@ -203,6 +203,146 @@ async function main(): Promise<void> {
   assert.ok((validation.result?.errors ?? []).length > 0, 'validate reports syntax errors');
   console.log('ok validate: syntax errors reported');
 
+  // Code action: create a missing declaration.
+  const missingText = 'package C {\n  part p : MissingType;\n}\n';
+  const missingUri = 'file://' + path.resolve('/tmp/sysml-e2e-missing.sysml');
+  notify('textDocument/didOpen', {
+    textDocument: { uri: missingUri, languageId: 'sysml', version: 1, text: missingText },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const missingPos = positionOf(missingText, 'MissingType');
+  const createActions = await send('textDocument/codeAction', {
+    textDocument: { uri: missingUri },
+    range: { start: missingPos, end: { line: missingPos.line, character: missingPos.character + 11 } },
+    context: {
+      diagnostics: [
+        {
+          range: { start: missingPos, end: { line: missingPos.line, character: missingPos.character + 11 } },
+          severity: 2,
+          source: 'sysml',
+          message: "Unresolved reference 'MissingType'",
+        },
+      ],
+    },
+  });
+  const createAction = (createActions.result ?? []).find((action: any) =>
+    String(action.title).startsWith('Create part definition')
+  );
+  assert.ok(createAction, 'create missing declaration action');
+  const createText = createAction.edit?.changes?.[missingUri]?.[0]?.newText ?? '';
+  assert.match(createText, /part def MissingType/, 'declaration text');
+  const createdLines = missingText.split('\n');
+  createdLines.splice(1, 0, ...createText.split('\n'));
+  const createdCheck = await send('sysml/validate', { text: createdLines.join('\n') });
+  assert.equal((createdCheck.result?.errors ?? []).length, 0, 'created declaration parses');
+  console.log('ok code action: create missing declaration');
+
+  // Code action: extract a requirement from a comment.
+  const commentText =
+    'package R {\n  // The vehicle mass shall not exceed 2000 kg.\n  part def Body {\n  }\n}\n';
+  const commentUri = 'file://' + path.resolve('/tmp/sysml-e2e-comment.sysml');
+  notify('textDocument/didOpen', {
+    textDocument: { uri: commentUri, languageId: 'sysml', version: 1, text: commentText },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const commentLine = 1;
+  const extractActions = await send('textDocument/codeAction', {
+    textDocument: { uri: commentUri },
+    range: {
+      start: { line: commentLine, character: 2 },
+      end: { line: commentLine, character: 10 },
+    },
+    context: { diagnostics: [] },
+  });
+  const extractAction = (extractActions.result ?? []).find((action: any) =>
+    String(action.title).startsWith('Extract requirement')
+  );
+  assert.ok(extractAction, 'extract requirement action');
+  const extracted = extractAction.edit?.changes?.[commentUri]?.[0]?.newText ?? '';
+  assert.match(extracted, /requirement def TheVehicleMassShallNot \{/, 'generated requirement name');
+  assert.match(extracted, /doc \/\* The vehicle mass shall not exceed 2000 kg\. \*\//, 'comment preserved as doc');
+  const extractedLines = commentText.split('\n');
+  extractedLines.splice(commentLine + 1, 0, ...extracted.split('\n'));
+  const extractedCheck = await send('sysml/validate', { text: extractedLines.join('\n') });
+  assert.equal((extractedCheck.result?.errors ?? []).length, 0, 'extracted requirement parses');
+  console.log('ok code action: extract requirement from comment');
+
+  // Code action: create an allocation that satisfies a requirement.
+  const reqText = 'package S {\n  requirement def BrakeRequirement {\n  }\n}\n';
+  const reqUri = 'file://' + path.resolve('/tmp/sysml-e2e-satisfy.sysml');
+  notify('textDocument/didOpen', {
+    textDocument: { uri: reqUri, languageId: 'sysml', version: 1, text: reqText },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const reqPos = positionOf(reqText, 'BrakeRequirement');
+  const satisfyActions = await send('textDocument/codeAction', {
+    textDocument: { uri: reqUri },
+    range: { start: reqPos, end: { line: reqPos.line, character: reqPos.character + 16 } },
+    context: { diagnostics: [] },
+  });
+  const satisfyAction = (satisfyActions.result ?? []).find((action: any) =>
+    String(action.title).includes('allocation satisfying')
+  );
+  assert.ok(satisfyAction, 'satisfy allocation action');
+  const allocation = satisfyAction.edit?.changes?.[reqUri]?.[0]?.newText ?? '';
+  assert.match(allocation, /allocation def BrakeRequirementSatisfaction/, 'allocation name');
+  assert.match(allocation, /satisfy BrakeRequirement;/, 'satisfy statement');
+  const satisfyEdit = satisfyAction.edit?.changes?.[reqUri]?.[0];
+  const satLines = reqText.split('\n');
+  satLines.splice(satisfyEdit.range.start.line, 0, ...allocation.split('\n'));
+  const satCheck = await send('sysml/validate', { text: satLines.join('\n') });
+  assert.equal((satCheck.result?.errors ?? []).length, 0, 'satisfy allocation parses');
+  console.log('ok code action: satisfy allocation');
+
+  // Traceability exposes an insertion point that produces valid SysML.
+  assert.ok(
+    typeof trace.result.verifications[0].insertLine === 'number',
+    'verification target has an insertion line'
+  );
+  const verifyLine = trace.result.verifications[0].insertLine;
+  const verifyColumn = trace.result.verifications[0].insertCharacter ?? 0;
+  const lines = demoText.split('\n');
+  lines.splice(verifyLine, 0, ' '.repeat(verifyColumn) + 'verify VehicleRequirement;');
+  const patched = lines.join('\n');
+  const verifyValidation = await send('sysml/validate', { text: patched });
+  assert.equal(
+    (verifyValidation.result?.errors ?? []).length,
+    0,
+    'inserting verify at the reported position parses'
+  );
+  console.log('ok traceability: insertion point parses');
+
+  // A verification case without an objective gets one when a link is added.
+  const noObjText =
+    'package T {\n  requirement def NoObjRequirement {\n  }\n  verification def NoObjVerification {\n  }\n}\n';
+  const noObjUri = 'file://' + path.resolve('/tmp/sysml-e2e-no-objective.sysml');
+  notify('textDocument/didOpen', {
+    textDocument: { uri: noObjUri, languageId: 'sysml', version: 1, text: noObjText },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const traceWithNoObjective = await send('sysml/traceability', {});
+  const noObjective = (traceWithNoObjective.result?.verifications ?? []).find(
+    (item: any) => item.name === 'NoObjVerification'
+  );
+  assert.ok(noObjective, 'verification without objective is listed');
+  assert.equal(noObjective.needsObjective, true, 'client is told to create an objective');
+  const noObjLines = noObjText.split('\n');
+  const noObjIndent = ' '.repeat(noObjective.insertCharacter ?? 0);
+  noObjLines.splice(
+    noObjective.insertLine,
+    0,
+    `${noObjIndent}objective {`,
+    `${noObjIndent}  verify NoObjRequirement;`,
+    `${noObjIndent}}`
+  );
+  const noObjCheck = await send('sysml/validate', { text: noObjLines.join('\n') });
+  assert.equal(
+    (noObjCheck.result?.errors ?? []).length,
+    0,
+    'generated objective block parses'
+  );
+  console.log('ok traceability: objective created when missing');
+
   proc.kill();
   console.log('LSP E2E PASSED');
 }

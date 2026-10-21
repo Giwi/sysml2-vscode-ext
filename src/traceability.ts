@@ -13,6 +13,7 @@ const EMPTY: TraceabilityPayload = { requirements: [], verifications: [], links:
  */
 export class SysmlTraceabilityPanel {
   private panel: vscode.WebviewPanel | undefined;
+  private data: TraceabilityPayload = EMPTY;
 
   constructor(private readonly getClient: () => LanguageClient | undefined) {}
 
@@ -34,6 +35,8 @@ export class SysmlTraceabilityPanel {
     this.panel.webview.onDidReceiveMessage(async (msg) => {
       if (msg?.command === 'open' && typeof msg.uri === 'string') {
         await this.openTarget(msg.uri, Number(msg.line) || 0, Number(msg.character) || 0);
+      } else if (msg?.command === 'addVerify') {
+        await this.addVerification(String(msg.requirement), String(msg.verification));
       }
     });
     await this.refresh();
@@ -53,7 +56,39 @@ export class SysmlTraceabilityPanel {
         data = EMPTY;
       }
     }
+    this.data = data;
     this.panel.webview.html = this.html(this.panel.webview, data);
+  }
+
+  /**
+   * Insert `verify <requirement>;` inside the verification case body.
+   *
+   * The insertion point comes from the server, which knows where the body
+   * starts, so the edit is not limited to files that are currently open.
+   */
+  private async addVerification(requirementId: string, verificationId: string): Promise<void> {
+    const requirement = this.data.requirements.find((item) => item.id === requirementId);
+    const verification = this.data.verifications.find((item) => item.id === verificationId);
+    if (!requirement || !verification) {
+      return;
+    }
+    const uri = vscode.Uri.parse(verification.uri);
+    const document = await vscode.workspace.openTextDocument(uri);
+    const line = verification.insertLine ?? Math.min(verification.line + 1, document.lineCount - 1);
+    const character = verification.insertCharacter ?? 0;
+    const indent = ' '.repeat(character);
+    const inserted = verification.needsObjective
+      ? `objective {\n${indent}  verify ${requirement.name};\n${indent}}\n`
+      : `verify ${requirement.name};\n${indent}`;
+    const edit = new vscode.WorkspaceEdit();
+    edit.insert(uri, new vscode.Position(line, character), inserted);
+    if (!(await vscode.workspace.applyEdit(edit))) {
+      void vscode.window.showWarningMessage('SysML: could not add the verification link.');
+      return;
+    }
+    await document.save();
+    // Give the server a moment to reparse before requesting the matrix again.
+    setTimeout(() => void this.refresh(), 400);
   }
 
   private async openTarget(uri: string, line: number, character: number): Promise<void> {
@@ -95,6 +130,8 @@ export class SysmlTraceabilityPanel {
   .link:hover { text-decoration: underline; }
   .tick { color: var(--vscode-testing-iconPassed, #3fb950); font-weight: 700; text-align: center; }
   .miss { text-align: center; color: var(--vscode-descriptionForeground); }
+  .addable { cursor: pointer; opacity: 0.45; }
+  .addable:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.2)); }
   .empty { padding: 24px; color: var(--vscode-descriptionForeground); }
   .unverified { margin-top: 14px; }
   .badge { display: inline-block; padding: 1px 6px; border-radius: 8px;
@@ -168,8 +205,16 @@ export class SysmlTraceabilityPanel {
             td.className = 'tick';
             td.textContent = '\\u2713';
           } else {
-            td.className = 'miss';
-            td.textContent = '\\u00b7';
+            td.className = 'miss addable';
+            td.textContent = '+';
+            td.title = 'Add verify ' + requirement.name + ' to ' + verification.name;
+            td.addEventListener('click', () => {
+              vscode.postMessage({
+                command: 'addVerify',
+                requirement: requirement.id,
+                verification: verification.id,
+              });
+            });
           }
           tr.appendChild(td);
         }

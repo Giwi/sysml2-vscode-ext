@@ -54,6 +54,11 @@ export interface TraceTarget {
   uri: string;
   line: number;
   character: number;
+  /** Position inside the declaration body, used to insert `verify` links. */
+  insertLine?: number;
+  insertCharacter?: number;
+  /** True when the verification case has no objective block yet. */
+  needsObjective?: boolean;
 }
 
 export interface TraceLink {
