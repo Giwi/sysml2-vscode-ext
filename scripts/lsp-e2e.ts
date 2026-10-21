@@ -107,6 +107,9 @@ async function main(): Promise<void> {
   assert.equal(trace.result.links.length, 1, 'one verify link');
   assert.equal(trace.result.requirements[0].name, 'VehicleRequirement');
   assert.equal(trace.result.verifications[0].name, 'MassVerification');
+  assert.equal(trace.result.links[0].uri, demoUri, 'link carries its document');
+  assert.equal(typeof trace.result.links[0].line, 'number', 'link carries its line');
+  assert.equal(typeof trace.result.links[0].endCharacter, 'number', 'link carries its end');
   console.log('ok traceability: 1 requirement, 1 verification, 1 link');
 
   const messy = 'package Demo {\n        part def A {\npart x : Real;\n    }\n}\n';
@@ -500,6 +503,29 @@ async function main(): Promise<void> {
   assert.ok(connectionEdge, 'connector edge exists');
   assert.match(connectionEdge.label, /power/, 'connector names its ports');
   console.log('ok IBD:', ibd.result.nodes.length, 'nodes,', connectionEdge.label);
+
+  // Removing the line that carries a link clears it from the matrix.
+  const link = trace.result.links[0];
+  const linkLine = link.line ?? 0;
+  const demoLines = demoText.split('\n');
+  const withoutLink = [
+    ...demoLines.slice(0, linkLine),
+    ...demoLines.slice(linkLine + 1),
+  ].join('\n');
+  notify('textDocument/didChange', {
+    textDocument: { uri: demoUri, version: 2 },
+    contentChanges: [{ text: withoutLink }],
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const afterRemoval = await send('sysml/traceability', {});
+  assert.equal((afterRemoval.result?.links ?? []).length, 0, 'removed link disappears');
+  assert.ok(
+    (afterRemoval.result?.verifications ?? []).some(
+      (item: any) => item.name === 'MassVerification'
+    ),
+    'verification case is still listed'
+  );
+  console.log('ok traceability: link removal is detected');
 
   proc.kill();
   console.log('LSP E2E PASSED');

@@ -66,6 +66,12 @@ export interface TraceTarget {
 export interface TraceLink {
   requirement: string;
   verification: string;
+  /** Location of the resolved `verify` reference, used to remove the link. */
+  uri?: string;
+  line?: number;
+  character?: number;
+  endLine?: number;
+  endCharacter?: number;
 }
 
 export interface TraceabilityPayload {

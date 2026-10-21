@@ -117,7 +117,7 @@ Both buttons open a save dialog and export the whole diagram, not just the visib
 
 ### Traceability matrix
 
-**SysML: Open Traceability Matrix** opens a table of requirements (rows) against verification cases (columns). A check mark means the verification case references the requirement through `verify <requirement>;`; the panel also lists requirements with no verification. Clicking any name opens its declaration, and clicking an empty cell inserts `verify <requirement>;` inside the verification case body. The matrix refreshes when the model changes.
+**SysML: Open Traceability Matrix** opens a table of requirements (rows) against verification cases (columns). A check mark means the verification case references the requirement through `verify <requirement>;`; the panel also lists requirements with no verification. Clicking a name opens its declaration, clicking an empty cell inserts `verify <requirement>;` inside the verification case body (creating an `objective` block when the case has none), and clicking a check mark removes the link after confirmation. By default edits apply through a `WorkspaceEdit`; set `sysml.traceability.preview` to review them as a diff instead. The matrix refreshes when the model changes.
 
 ### Editing
 
@@ -193,6 +193,7 @@ git push origin v0.1.0
 | `sysml.validation.unresolvedReference` | `true` | Report unresolved name references as warnings |
 | `sysml.graph.maxNodes` | `300` | Maximum number of nodes rendered in the structure graph view |
 | `sysml.format.alignMembers` | `false` | Align the `:` and `=` separators of consecutive members when formatting |
+| `sysml.traceability.preview` | `false` | Review traceability edits as a diff instead of applying them immediately |
 | `sysml.server.path` | `""` | Path to a custom language server module; empty uses the bundled server |
 | `sysml.ai.enable` | `true` | Enable the AI assistant, chat participant and diff previews |
 | `sysml.ai.model` | `""` | Preferred model family or id; empty uses the first available model |

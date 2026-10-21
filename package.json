@@ -114,6 +114,11 @@
           "default": false,
           "description": "Align the ':' and '=' separators of consecutive members when formatting."
         },
+        "sysml.traceability.preview": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open traceability edits (adding or removing a verify link) as a diff for review instead of applying them immediately."
+        },
         "sysml.ai.enable": {
           "type": "boolean",
           "default": true,

@@ -1527,8 +1527,19 @@ connection.onRequest('sysml/traceability', () => {
           const target = requirements.find(
             (r) => r.qname === ref.resolved!.qname && r.uri === ref.resolved!.uri
           );
-          if (target && !links.some((l) => l.requirement === target.id && l.verification === sym.id)) {
-            links.push({ requirement: target.id, verification: sym.id });
+          if (
+            target &&
+            !links.some((l) => l.requirement === target.id && l.verification === sym.id)
+          ) {
+            links.push({
+              requirement: target.id,
+              verification: sym.id,
+              uri: model.uri,
+              line: ref.range.start.line,
+              character: ref.range.start.character,
+              endLine: ref.range.end.line,
+              endCharacter: ref.range.end.character,
+            });
           }
         }
       }

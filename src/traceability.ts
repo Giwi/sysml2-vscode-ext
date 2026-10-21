@@ -1,8 +1,14 @@
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
 import type { TraceabilityPayload } from './shared/protocol';
+import { proposeEdit } from './ai/editPreview';
 
 const EMPTY: TraceabilityPayload = { requirements: [], verifications: [], links: [] };
+
+/** Whether matrix edits open as a diff instead of applying immediately. */
+function previewEdits(): boolean {
+  return vscode.workspace.getConfiguration('sysml').get<boolean>('traceability.preview', false);
+}
 
 /**
  * Requirement / verification matrix.
@@ -37,6 +43,8 @@ export class SysmlTraceabilityPanel {
         await this.openTarget(msg.uri, Number(msg.line) || 0, Number(msg.character) || 0);
       } else if (msg?.command === 'addVerify') {
         await this.addVerification(String(msg.requirement), String(msg.verification));
+      } else if (msg?.command === 'removeVerify') {
+        await this.removeVerification(String(msg.requirement), String(msg.verification));
       }
     });
     await this.refresh();
@@ -80,6 +88,15 @@ export class SysmlTraceabilityPanel {
     const inserted = verification.needsObjective
       ? `objective {\n${indent}  verify ${requirement.name};\n${indent}}\n`
       : `verify ${requirement.name};\n${indent}`;
+
+    if (previewEdits()) {
+      const offset = document.offsetAt(new vscode.Position(line, character));
+      const full = document.getText();
+      const proposed = full.slice(0, offset) + inserted + full.slice(offset);
+      await proposeEdit(document, proposed, 'SysML: add verification link');
+      return;
+    }
+
     const edit = new vscode.WorkspaceEdit();
     edit.insert(uri, new vscode.Position(line, character), inserted);
     if (!(await vscode.workspace.applyEdit(edit))) {
@@ -88,6 +105,51 @@ export class SysmlTraceabilityPanel {
     }
     await document.save();
     // Give the server a moment to reparse before requesting the matrix again.
+    setTimeout(() => void this.refresh(), 400);
+  }
+
+  /** Remove the `verify` statement behind an existing link. */
+  private async removeVerification(requirementId: string, verificationId: string): Promise<void> {
+    const link = this.data.links.find(
+      (item) => item.requirement === requirementId && item.verification === verificationId
+    );
+    if (!link?.uri || typeof link.line !== 'number') {
+      return;
+    }
+    const uri = vscode.Uri.parse(link.uri);
+    const document = await vscode.workspace.openTextDocument(uri);
+    const lineText = document.lineAt(link.line).text.trim();
+    const choice = await vscode.window.showWarningMessage(
+      `Remove this verification link?\n\n${lineText}`,
+      { modal: true },
+      'Remove'
+    );
+    if (choice !== 'Remove') {
+      return;
+    }
+
+    const lastLine = link.line;
+    const start = new vscode.Position(lastLine, 0);
+    const end =
+      lastLine + 1 < document.lineCount
+        ? new vscode.Position(lastLine + 1, 0)
+        : new vscode.Position(lastLine, document.lineAt(lastLine).text.length);
+
+    if (previewEdits()) {
+      const full = document.getText();
+      const proposed =
+        full.slice(0, document.offsetAt(start)) + full.slice(document.offsetAt(end));
+      await proposeEdit(document, proposed, 'SysML: remove verification link');
+      return;
+    }
+
+    const edit = new vscode.WorkspaceEdit();
+    edit.delete(uri, new vscode.Range(start, end));
+    if (!(await vscode.workspace.applyEdit(edit))) {
+      void vscode.window.showWarningMessage('SysML: could not remove the verification link.');
+      return;
+    }
+    await document.save();
     setTimeout(() => void this.refresh(), 400);
   }
 
@@ -129,6 +191,8 @@ export class SysmlTraceabilityPanel {
   .link { color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: none; }
   .link:hover { text-decoration: underline; }
   .tick { color: var(--vscode-testing-iconPassed, #3fb950); font-weight: 700; text-align: center; }
+  .removable { cursor: pointer; }
+  .removable:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.2)); }
   .miss { text-align: center; color: var(--vscode-descriptionForeground); }
   .addable { cursor: pointer; opacity: 0.45; }
   .addable:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.2)); }
@@ -202,8 +266,16 @@ export class SysmlTraceabilityPanel {
         for (const verification of data.verifications) {
           const td = document.createElement('td');
           if (linked.has(requirement.id + '|' + verification.id)) {
-            td.className = 'tick';
+            td.className = 'tick removable';
             td.textContent = '\\u2713';
+            td.title = 'Remove verify ' + requirement.name + ' from ' + verification.name;
+            td.addEventListener('click', () => {
+              vscode.postMessage({
+                command: 'removeVerify',
+                requirement: requirement.id,
+                verification: verification.id,
+              });
+            });
           } else {
             td.className = 'miss addable';
             td.textContent = '+';
