@@ -2,7 +2,7 @@
   "name": "sysml-vscode",
   "displayName": "SysML v2",
   "description": "SysML v2 textual editing for VS Code: LSP client, diagnostics, outline, model explorer, structural graph and native AI assistance",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "sysml-vscode",
   "repository": {
     "type": "git",
