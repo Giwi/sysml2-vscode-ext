@@ -70,8 +70,31 @@ export class Workspace {
   /**
    * Resolve a reference name against the scope chain of `scope`, then
    * file-level symbols, then imports, then the global index.
+   *
+   * Qualified names (`Pkg::Element`) resolve the first segment normally and
+   * then walk the remaining segments through owned members, so rename and
+   * go-to-definition work on qualified references too.
    */
   resolve(from: DocumentModel, scope: SysmlSymbol, name: string): IndexedSymbol | undefined {
+    if (name.includes('::')) {
+      const [head, ...rest] = name.split('::').filter((part) => part.length > 0);
+      if (!head) {
+        return undefined;
+      }
+      const base = this.resolve(from, scope, head);
+      if (!base) {
+        return undefined;
+      }
+      let sym = base.sym;
+      for (const segment of rest) {
+        const next = sym.children.find((child) => child.name === segment || child.shortName === segment);
+        if (!next) {
+          return undefined;
+        }
+        sym = next;
+      }
+      return { sym, model: base.model };
+    }
     // 1. Scope chain: innermost enclosing declaration upwards.
     let cur: SysmlSymbol | undefined = scope;
     while (cur) {
@@ -121,7 +144,8 @@ export class Workspace {
   resolveRefs(model: DocumentModel): void {
     const visit = (sym: SysmlSymbol): void => {
       for (const ref of sym.refs) {
-        const hit = this.resolve(model, sym, ref.name);
+        // Use the full text: qualified references need every segment.
+        const hit = this.resolve(model, sym, ref.text);
         ref.resolved = hit
           ? {
               name: hit.sym.name,

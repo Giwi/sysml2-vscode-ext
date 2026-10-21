@@ -118,7 +118,7 @@ Both buttons open a save dialog and export the whole diagram, not just the visib
 
 | Feature | Behaviour |
 |---------|-----------|
-| Rename (`F2`) | Renames the declaration and every resolved reference, including qualified references in other files. Standard-library symbols are read-only |
+| Rename (`F2`) | Renames the declaration and every resolved reference, including other files. In a qualified reference only the segment naming the symbol is replaced (`Q::Base` becomes `Q::Root`). The rename is refused when the new name already exists in the same scope, or when the target belongs to the read-only standard library |
 | Quick fixes | Unresolved reference offers the owning standard-library import, `import ScalarValues` for scalar types, and the closest declared name when the text is a near miss |
 | Format document | Re-indents from brace depth, trims trailing whitespace, collapses blank-line runs. Strings and comments are ignored when counting braces, so tokens and comments are preserved |
 

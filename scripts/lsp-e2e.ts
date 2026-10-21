@@ -149,6 +149,56 @@ async function main(): Promise<void> {
   assert.ok(edits.length >= 3, 'rename updates declaration and references');
   console.log('ok rename:', edits.length, 'edits');
 
+  // Qualified references keep their qualifier; only the exact segment changes.
+  const qualText = [
+    'package Q {',
+    '  part def Base {',
+    '  }',
+    '  part def Derived {',
+    '  }',
+    '  part b : Q::Base;',
+    '}',
+    '',
+  ].join('\n');
+  const qualUri = 'file://' + path.resolve('/tmp/sysml-e2e-qualified.sysml');
+  notify('textDocument/didOpen', {
+    textDocument: { uri: qualUri, languageId: 'sysml', version: 1, text: qualText },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  const qualified = await send('textDocument/rename', {
+    textDocument: { uri: qualUri },
+    position: positionOf(qualText, 'Base'),
+    newName: 'Root',
+  });
+  const qualifiedEdits = qualified.result?.changes?.[qualUri] ?? [];
+  assert.equal(qualifiedEdits.length, 2, 'declaration and one qualified reference');
+  const qualifiedRefEdit = qualifiedEdits.find((edit: any) => edit.range.start.line === 5);
+  assert.ok(qualifiedRefEdit, 'qualified reference is edited');
+  const refLine = qualText.split('\n')[5];
+  const expectedCharacter = refLine.indexOf('Base');
+  assert.equal(
+    qualifiedRefEdit.range.start.character,
+    expectedCharacter,
+    'only the Base segment is replaced, not the whole Q::Base text'
+  );
+  assert.equal(
+    qualifiedRefEdit.range.end.character,
+    expectedCharacter + 'Base'.length,
+    'segment range covers exactly Base'
+  );
+  console.log('ok rename qualified: segment-only replacement');
+
+  // Renaming onto a sibling name must be refused instead of creating a duplicate.
+  const duplicate = await send('textDocument/rename', {
+    textDocument: { uri: qualUri },
+    position: positionOf(qualText, 'Base'),
+    newName: 'Derived',
+  });
+  assert.ok(duplicate.error, 'duplicate rename is rejected');
+  assert.match(duplicate.error!.message, /already exists/, 'error explains the collision');
+  console.log('ok rename collision: refused');
+
   const validation = await send('sysml/validate', { text: 'package P { part def A { }' });
   assert.ok((validation.result?.errors ?? []).length > 0, 'validate reports syntax errors');
   console.log('ok validate: syntax errors reported');
