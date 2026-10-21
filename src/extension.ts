@@ -20,7 +20,28 @@ function initializationOptions(): unknown {
     libraryEnable: cfg.get<boolean>('library.enable', true),
     unresolvedWarning: cfg.get<boolean>('validation.unresolvedReference', true),
     maxNodes: cfg.get<number>('graph.maxNodes', 300),
+    formatAlignMembers: cfg.get<boolean>('format.alignMembers', false),
   };
+}
+
+/** Push settings that the server reads at runtime. */
+function pushConfiguration(): void {
+  if (!client) {
+    return;
+  }
+  const cfg = vscode.workspace.getConfiguration('sysml');
+  void client.sendNotification('workspace/didChangeConfiguration', {
+    settings: {
+      sysml: {
+        library: { enable: cfg.get<boolean>('library.enable', true) },
+        validation: {
+          unresolvedReference: cfg.get<boolean>('validation.unresolvedReference', true),
+        },
+        graph: { maxNodes: cfg.get<number>('graph.maxNodes', 300) },
+        format: { alignMembers: cfg.get<boolean>('format.alignMembers', false) },
+      },
+    },
+  });
 }
 
 /** Build a language client; recreated on restart so initialization options are re-read. */
@@ -74,7 +95,12 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
     vscode.commands.registerCommand('sysml.openTraceability', () => traceability.show()),
     vscode.commands.registerCommand('sysml.refreshGraph', () => refreshGraph()),
     vscode.commands.registerCommand('sysml.exportGraph', () => session.exportDot()),
-    vscode.window.onDidChangeActiveTextEditor(() => void refreshGraph())
+    vscode.window.onDidChangeActiveTextEditor(() => void refreshGraph()),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('sysml')) {
+        pushConfiguration();
+      }
+    })
   );
 
   // AI features are registered up front as well: the commands explain how to

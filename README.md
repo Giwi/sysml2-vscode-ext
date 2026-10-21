@@ -120,7 +120,9 @@ Both buttons open a save dialog and export the whole diagram, not just the visib
 |---------|-----------|
 | Rename (`F2`) | Renames the declaration and every resolved reference, including other files. In a qualified reference only the segment naming the symbol is replaced (`Q::Base` becomes `Q::Root`). The rename is refused when the new name already exists in the same scope, or when the target belongs to the read-only standard library |
 | Quick fixes | Unresolved reference offers the owning standard-library import, `import ScalarValues` for scalar types, the closest declared name for a near miss, and creation of the missing declaration. A comment offers extraction to a requirement; a requirement declaration offers a `satisfy` allocation |
-| Format document | Re-indents from brace depth, trims trailing whitespace, collapses blank-line runs. Strings and comments are ignored when counting braces, so tokens and comments are preserved |
+| Format document | Re-indents from brace depth, trims trailing whitespace, collapses blank-line runs. Strings and comments are ignored when counting braces, so tokens and comments are preserved. With `sysml.format.alignMembers`, the `:` and `=` of consecutive members are aligned in columns |
+
+Format on save uses VS Code's own `editor.formatOnSave` setting: the extension advertises `documentFormattingProvider`, so the built-in save hook calls the formatter. Formatting is idempotent, so a second pass on an already formatted file returns no edits.
 
 ### AI assistance
 
@@ -181,6 +183,7 @@ git push origin v0.1.0
 | `sysml.library.enable` | `true` | Index the bundled SysML/KerML normative standard library for cross-file resolution, hover and completion |
 | `sysml.validation.unresolvedReference` | `true` | Report unresolved name references as warnings |
 | `sysml.graph.maxNodes` | `300` | Maximum number of nodes rendered in the structure graph view |
+| `sysml.format.alignMembers` | `false` | Align the `:` and `=` separators of consecutive members when formatting |
 | `sysml.server.path` | `""` | Path to a custom language server module; empty uses the bundled server |
 | `sysml.ai.enable` | `true` | Enable the AI assistant, chat participant and diff previews |
 | `sysml.ai.model` | `""` | Preferred model family or id; empty uses the first available model |

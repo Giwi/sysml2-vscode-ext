@@ -109,6 +109,11 @@
           "default": 300,
           "description": "Maximum number of nodes rendered in the structure graph."
         },
+        "sysml.format.alignMembers": {
+          "type": "boolean",
+          "default": false,
+          "description": "Align the ':' and '=' separators of consecutive members when formatting."
+        },
         "sysml.ai.enable": {
           "type": "boolean",
           "default": true,

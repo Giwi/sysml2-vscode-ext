@@ -63,3 +63,38 @@ test('ai: extracts a fenced code block and falls back to plain text', () => {
   );
   assert.equal(extractCode('package P {}', 'sysml'), 'package P {}');
 });
+
+test('format: aligns member separators when enabled', () => {
+  const input = 'package P {\n  part a : A;\n  attribute longer : B;\n}\n';
+  const output = formatText(input, { insertSpaces: true, tabSize: 2, alignMembers: true });
+  const lines = output.split('\n');
+  assert.equal(lines[1].indexOf(':'), lines[2].indexOf(':'), 'separators share a column');
+});
+
+test('format: alignment is disabled by default', () => {
+  const input = 'package P {\n  part a : A;\n  attribute longer : B;\n}\n';
+  const output = formatText(input, { insertSpaces: true, tabSize: 2 });
+  assert.equal(output, input, 'no extra padding without the option');
+});
+
+test('format: alignment ignores :: qualifiers', () => {
+  const input = 'package P {\n  part a : Q::A;\n  attribute longer : Q::B;\n}\n';
+  const output = formatText(input, { insertSpaces: true, tabSize: 2, alignMembers: true });
+  const lines = output.split('\n');
+  assert.equal(lines[1].indexOf(':'), lines[2].indexOf(':'), 'typing colon is the anchor');
+  assert.match(output, /Q::A/);
+});
+
+test('format: blank lines break alignment groups', () => {
+  const input = 'package P {\n  part a : A;\n\n  attribute muchLonger : B;\n}\n';
+  const output = formatText(input, { insertSpaces: true, tabSize: 2, alignMembers: true });
+  const lines = output.split('\n');
+  assert.notEqual(lines[1].indexOf(':'), lines[3].indexOf(':'), 'groups stay independent');
+});
+
+test('format: alignment is idempotent', () => {
+  const input = 'package P {\n  part a : A;\n  attribute longer : B;\n}\n';
+  const once = formatText(input, { insertSpaces: true, tabSize: 2, alignMembers: true });
+  const twice = formatText(once, { insertSpaces: true, tabSize: 2, alignMembers: true });
+  assert.equal(twice, once);
+});

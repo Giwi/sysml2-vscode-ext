@@ -68,12 +68,17 @@ function positionOf(text: string, needle: string) {
 }
 
 async function main(): Promise<void> {
-  await send('initialize', {
+  const init = await send('initialize', {
     processId: process.pid,
     rootUri: 'file://' + process.cwd(),
     capabilities: {},
     initializationOptions: { libraryPath: path.resolve('library'), libraryEnable: false },
   });
+  assert.equal(
+    init.result?.capabilities?.documentFormattingProvider,
+    true,
+    'formatting capability is advertised, so editor.formatOnSave can call it'
+  );
   notify('initialized', {});
   notify('textDocument/didOpen', {
     textDocument: { uri: demoUri, languageId: 'sysml', version: 1, text: demoText },
@@ -121,6 +126,42 @@ async function main(): Promise<void> {
     'formatting output'
   );
   console.log('ok formatting');
+
+  // Alignment is controlled by a setting pushed through didChangeConfiguration.
+  notify('workspace/didChangeConfiguration', {
+    settings: { sysml: { format: { alignMembers: true } } },
+  });
+  const alignedText = 'package A {\n  part a : A;\n  attribute longer : B;\n}\n';
+  const alignedUri = 'file://' + path.resolve('/tmp/sysml-e2e-align.sysml');
+  notify('textDocument/didOpen', {
+    textDocument: { uri: alignedUri, languageId: 'sysml', version: 1, text: alignedText },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const aligned = await send('textDocument/formatting', {
+    textDocument: { uri: alignedUri },
+    options: { tabSize: 2, insertSpaces: true },
+  });
+  const alignedLines = String(aligned.result?.[0]?.newText ?? '').split('\n');
+  assert.equal(
+    alignedLines[1]?.indexOf(':'),
+    alignedLines[2]?.indexOf(':'),
+    'member separators are aligned'
+  );
+  console.log('ok formatting: members aligned');
+
+  // Formatting twice must be a no-op: this is what format-on-save relies on.
+  const formattedText = String(aligned.result?.[0]?.newText ?? alignedText);
+  notify('textDocument/didChange', {
+    textDocument: { uri: alignedUri, version: 2 },
+    contentChanges: [{ text: formattedText }],
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const second = await send('textDocument/formatting', {
+    textDocument: { uri: alignedUri },
+    options: { tabSize: 2, insertSpaces: true },
+  });
+  assert.equal(second.result?.length ?? 0, 0, 'second format pass returns no edits');
+  console.log('ok formatting: idempotent for format-on-save');
 
   const actions = await send('textDocument/codeAction', {
     textDocument: { uri: messyUri },

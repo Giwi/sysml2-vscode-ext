@@ -87,6 +87,7 @@ for (const method of [
 let libraryEnabled = true;
 let unresolvedWarnings = true;
 let maxGraphNodes = 300;
+let formatAlignMembers = false;
 let libraryPath = '';
 
 function isLibraryUri(uri: string): boolean {
@@ -322,6 +323,7 @@ connection.onInitialize((params) => {
   libraryEnabled = params.initializationOptions?.libraryEnable ?? true;
   unresolvedWarnings = params.initializationOptions?.unresolvedWarning ?? true;
   maxGraphNodes = params.initializationOptions?.maxNodes ?? 300;
+  formatAlignMembers = params.initializationOptions?.formatAlignMembers ?? false;
 
   return {
     capabilities: {
@@ -387,6 +389,9 @@ connection.onDidChangeConfiguration((change) => {
   }
   if (typeof settings.graph?.maxNodes === 'number') {
     maxGraphNodes = settings.graph.maxNodes;
+  }
+  if (typeof settings.format?.alignMembers === 'boolean') {
+    formatAlignMembers = settings.format.alignMembers;
   }
   validateOpenDocuments();
 });
@@ -1139,6 +1144,7 @@ connection.onDocumentFormatting((params) => {
   const formatted = formatText(text, {
     insertSpaces: params.options.insertSpaces,
     tabSize: params.options.tabSize,
+    alignMembers: formatAlignMembers,
   });
   if (formatted === text) {
     return [];
