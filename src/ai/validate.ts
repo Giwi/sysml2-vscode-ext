@@ -1,14 +1,8 @@
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
+import type { ValidationError, ValidationResult } from '../shared/protocol';
 
-export interface ValidationError {
-  line: number;
-  column: number;
-  message: string;
-}
-
-/**
- * Parse a proposed document through the language server without touching the
+/** Parse a proposed document through the language server without touching the
  * workspace. The server exposes `sysml/validate` for exactly this purpose.
  */
 export async function validateSysml(
@@ -20,7 +14,7 @@ export async function validateSysml(
     return [];
   }
   try {
-    const result = await client.sendRequest<{ errors: ValidationError[] }>('sysml/validate', { text });
+    const result = await client.sendRequest<ValidationResult>('sysml/validate', { text });
     return result?.errors ?? [];
   } catch {
     // A validation failure must not block the assistant entirely.

@@ -24,6 +24,15 @@ import type { DocumentModel, LspRange, SysmlSymbol } from './model.js';
 import { Workspace } from './workspace.js';
 import type { IndexedSymbol } from './workspace.js';
 import { formatText } from './format.js';
+import type {
+  GraphEdge,
+  GraphNode,
+  IndexProgress,
+  ModelTreeNode,
+  TraceLink,
+  TraceTarget,
+  ValidationResult,
+} from '../shared/protocol.js';
 
 const KEYWORDS = [
   'about', 'abstract', 'accept', 'action', 'actor', 'after', 'alias', 'all', 'allocate', 'allocation',
@@ -117,7 +126,9 @@ async function loadLibrary(dir: string): Promise<void> {
   // Parse one file per turn so the event loop can service LSP requests in
   // between. A library file takes up to a couple of seconds to parse, so
   // batching several of them would stall the graph, hover and completion.
-  for (const file of files) {
+  connection.sendNotification('sysml/indexProgress', { done: 0, total: files.length });
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
     // Give an in-flight request priority over the next library file.
     const deadline = Date.now() + 500;
     while (Date.now() - lastRequestAt < 120 && Date.now() < deadline) {
@@ -129,6 +140,10 @@ async function loadLibrary(dir: string): Promise<void> {
       model.errors = []; // syntax noise in library files is not actionable for users
     } catch {
       // ignore unreadable library files
+    }
+    if (i % 5 === 0 || i === files.length - 1) {
+      const progress: IndexProgress = { done: i + 1, total: files.length };
+      connection.sendNotification('sysml/indexProgress', progress);
     }
     await new Promise((r) => setTimeout(r, 0));
   }
@@ -336,6 +351,17 @@ connection.onInitialized(() => {
     .catch(() => {
       /* client without file watcher support */
     });
+
+  // Warm the ANTLR ATN/DFA caches once. The first parse of any document costs
+  // about two seconds because the grammar tables are built lazily; doing it
+  // here keeps later files in the single-digit millisecond range.
+  setTimeout(() => {
+    try {
+      parseText('package Warmup { part def Element; }', true);
+    } catch {
+      // Warm-up is best effort and must never affect startup.
+    }
+  }, 0);
 
   void (async () => {
     await scanWorkspaceFolders();
@@ -940,25 +966,6 @@ function completionItemKindOf(kind: string): number {
  * declaration without a second request. `children` is a count, not a list:
  * the webview derives containment from the edges so the payload stays small.
  */
-interface GraphNode {
-  id: string;
-  label: string;
-  kind: string;
-  depth: number;
-  children: number;
-  /** Declared type, e.g. `Wheel` in `part wheel : Wheel`. */
-  type?: string;
-  /** Declared multiplicity without brackets, e.g. `4`. */
-  multiplicity?: string;
-}
-
-interface GraphEdge {
-  from: string;
-  to: string;
-  kind: string;
-  label: string;
-}
-
 /**
  * Containment tree plus cross-references for one document.
  *
@@ -1032,16 +1039,6 @@ connection.onRequest('sysml/graph', (params: { uri: string; maxNodes?: number })
 
 // --- Model Explorer tree ---
 
-interface ModelTreeNode {
-  name: string;
-  kind: string;
-  qname: string;
-  uri: string;
-  line: number;
-  character: number;
-  children: ModelTreeNode[];
-}
-
 function toModelTree(sym: SysmlSymbol, uri: string): ModelTreeNode {
   return {
     name: sym.name,
@@ -1059,7 +1056,8 @@ function toModelTree(sym: SysmlSymbol, uri: string): ModelTreeNode {
  * declaration tree underneath. Standard library files are excluded because
  * they would dominate the tree.
  */
-connection.onRequest('sysml/modelTree', () => {  const files: ModelTreeNode[] = [];
+connection.onRequest('sysml/modelTree', () => {
+  const files: ModelTreeNode[] = [];
   for (const model of workspace.docs.values()) {
     if (model.library || model.symbols.length === 0) {
       continue;
@@ -1080,26 +1078,11 @@ connection.onRequest('sysml/modelTree', () => {  const files: ModelTreeNode[] = 
 
 // --- Traceability: requirements <-> verification cases ---
 
-interface TraceTarget {
-  id: string;
-  name: string;
-  qname: string;
-  uri: string;
-  line: number;
-  character: number;
-}
-
-interface TraceLink {
-  requirement: string;
-  verification: string;
-}
-
 /**
  * Build the requirement/verification matrix.
  *
- * A verification case links to a requirement through a `subsets` reference:
- * `verify VehicleRequirement;` is parsed as an owned reference subsetting on
- * the verification usage, which is exactly the relationship the matrix needs.
+ * `verify X;` is now recorded as an explicit `verify` reference, so the matrix
+ * no longer has to infer the link from a generic reference subsetting.
  */
 connection.onRequest('sysml/traceability', () => {
   const requirements: TraceTarget[] = [];
@@ -1138,14 +1121,20 @@ connection.onRequest('sysml/traceability', () => {
     const visit = (sym: SysmlSymbol): void => {
       if (/Verification/.test(sym.kind)) {
         verifications.push(toTarget(sym, model.uri));
-        for (const ref of sym.refs) {
+        // Prefer the explicit `verify` reference. Older models, or a verify
+        // statement nested deeper, still expose it as a reference subsetting.
+        const explicit = sym.refs.filter((ref) => ref.kind === 'verify');
+        const candidates = explicit.length
+          ? explicit
+          : sym.refs.filter((ref) => ref.kind === 'subsets');
+        for (const ref of candidates) {
           if (!ref.resolved || !/Requirement/.test(ref.resolved.kind)) {
             continue;
           }
           const target = requirements.find(
             (r) => r.qname === ref.resolved!.qname && r.uri === ref.resolved!.uri
           );
-          if (target) {
+          if (target && !links.some((l) => l.requirement === target.id && l.verification === sym.id)) {
             links.push({ requirement: target.id, verification: sym.id });
           }
         }
@@ -1162,7 +1151,7 @@ connection.onRequest('sysml/traceability', () => {
 
 // --- Validation for AI-generated text (no workspace side effects) ---
 
-connection.onRequest('sysml/validate', (params: { text: string }) => {
+connection.onRequest('sysml/validate', (params: { text: string }): ValidationResult => {
   if (typeof params?.text !== 'string') {
     return { errors: [] };
   }

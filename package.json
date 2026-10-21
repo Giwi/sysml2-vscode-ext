@@ -307,7 +307,7 @@
     "compile": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node esbuild.mjs --smoke && node dist/smoke.js && node dist/snippet-smoke.js",
+    "test": "node esbuild.mjs --smoke && node dist/smoke.js && node dist/snippet-smoke.js && node --test dist/unit-tests.js && node dist/lsp-e2e.js",
     "vscode:prepublish": "node esbuild.mjs --production"
   },
   "dependencies": {

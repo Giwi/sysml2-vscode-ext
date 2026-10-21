@@ -1,16 +1,8 @@
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
+import type { ModelTreeNode } from './shared/protocol';
 
-/** A node returned by the server's `sysml/modelTree` request. */
-export interface ModelTreeNode {
-  name: string;
-  kind: string;
-  qname: string;
-  uri: string;
-  line: number;
-  character: number;
-  children: ModelTreeNode[];
-}
+export type { ModelTreeNode } from './shared/protocol';
 
 export class SysmlModelExplorer implements vscode.TreeDataProvider<ModelTreeNode> {
   static readonly viewType = 'sysml.modelExplorer';

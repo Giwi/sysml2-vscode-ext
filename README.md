@@ -211,15 +211,24 @@ Layout selection and image export (PNG, SVG) are available from the buttons in t
 | `npm run compile` | Bundle `dist/extension.js`, `dist/server.js` and the smoke test |
 | `npm run watch` | Rebuild on change |
 | `npm run typecheck` | Strict TypeScript check, no emit |
-| `npm test` | Parse every example plus the standard library, verify cross-file resolution, and check that all snippets produce valid SysML |
+| `npm test` | Smoke tests, unit tests and an end-to-end language-server test |
 
-`npm test` parses the bundled examples with the full LL strategy and the standard library with a fast SLL-plus-bail strategy, then asserts that all example references resolve. It also renders each snippet with placeholder names and parses the result. It exits non-zero on any example syntax error or invalid snippet.
+`npm test` runs four layers:
+
+1. `smoke`: parse every bundled example with the full LL strategy, index the standard library with SLL plus bail, and verify cross-file resolution.
+2. `snippet-smoke`: render every snippet, parse the result, and fail on invalid SysML.
+3. `unit-tests`: `node:test` coverage for formatting, model extraction (multiplicity, explicit `verify` refs, symbol kinds) and AI code extraction.
+4. `lsp-e2e`: start `dist/server.js` over stdio and exercise `sysml/graph`, `sysml/traceability`, `sysml/validate`, formatting, rename and code actions.
 
 ## Design notes
 
 - **Custom language server.** A TypeScript LSP server over stdio keeps the extension self-contained: no JVM, no external server binary. It uses `vscode-languageserver` and the official `antlr4` npm runtime.
 - **Grammar provenance.** `grammar/SysMLv2Parser.g4` and `SysMLv2Lexer.g4` are converted from the OMG KEBNF specification by [daltskin/sysml-v2-grammar](https://github.com/daltskin/sysml-v2-grammar) (MIT). See `grammar/ATTRIBUTION.md`. One local patch makes the `visibilityIndicator` in `importRule` optional, matching the specification.
 - **Fast library parsing.** The 94-file standard library is indexed with SLL prediction and `BailErrorStrategy` for speed, falling back to a full LL parse if prediction fails. Diagnostics are still computed with the full strategy for open documents.
+- **Responsive indexing.** The indexer parses one file per turn, pauses when an LSP request is pending, and reports progress to the status bar, so the graph and hover stay usable during the initial library scan.
+- **Shared protocol types.** `src/shared/protocol.ts` is imported by the language server, the extension host and the webview, so a payload change cannot silently desynchronise the two sides.
+- **Typed webview.** `src/webview/graph.ts` is compiled by esbuild to `media/graph.js`; the diagram is plain SVG with no third-party runtime.
+- **Explicit traceability links.** `verify` and `satisfy` statements are recorded as their own reference kinds instead of being inferred from generic subsetting.
 - **Block definition diagram.** Blocks are drawn as SysML rectangles with a stereotype line, a name and compartments for parts, attributes, ports, actions, states and requirements. Relationships use standard notation: filled diamond for composition, hollow triangle for generalization, open arrow for typing and dependency. The renderer is plain SVG with no third-party library, so the diagram is exportable as true vector graphics.
 - **Layouts.** Tree, force, circle and grid are computed directly in the webview. The tree layout uses containment edges only, otherwise cross-references would flatten the hierarchy.
 - **One graph, one host.** The panel is owned by `SysmlGraphPanel` with a shared `GraphSession` that handles graph fetching and webview messages. Views are registered at the very start of `activate`, before the language server starts.

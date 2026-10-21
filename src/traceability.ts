@@ -1,25 +1,6 @@
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
-
-interface TraceTarget {
-  id: string;
-  name: string;
-  qname: string;
-  uri: string;
-  line: number;
-  character: number;
-}
-
-interface TraceLink {
-  requirement: string;
-  verification: string;
-}
-
-interface TraceabilityPayload {
-  requirements: TraceTarget[];
-  verifications: TraceTarget[];
-  links: TraceLink[];
-}
+import type { TraceabilityPayload } from './shared/protocol';
 
 const EMPTY: TraceabilityPayload = { requirements: [], verifications: [], links: [] };
 
@@ -125,6 +106,7 @@ export class SysmlTraceabilityPanel {
   <div id="summary"></div>
   <div id="content"></div>
   <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
     const data = ${payload};
     const content = document.getElementById('content');
     const summary = document.getElementById('summary');

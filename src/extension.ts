@@ -8,6 +8,7 @@ import { SysmlTraceabilityPanel } from './traceability';
 import { registerAgentPanel } from './ai/agentPanel';
 import { registerEditPreview } from './ai/editPreview';
 import { registerInlineAssist } from './ai/inlineAssist';
+import type { IndexProgress } from './shared/protocol';
 
 let client: LanguageClient | undefined;
 let context: vscode.ExtensionContext | undefined;
@@ -84,12 +85,30 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
     registerAgentPanel(context, () => client);
   }
 
+  // Background indexing progress, shown only while the standard library is
+  // being parsed. The server yields between files, so startup stays usable.
+  const indexStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  indexStatus.name = 'SysML indexing';
+  context.subscriptions.push(indexStatus);
+
   // Re-register the model-change notification on every new client instance.
   const attachNotifications = (c: LanguageClient): void => {
     c.onNotification('sysml/modelChanged', () => {
       session.scheduleRefresh(() => graphPanel.webviews());
       modelExplorer.scheduleRefresh();
       void traceability.refresh();
+    });
+    c.onNotification('sysml/indexProgress', (progress: IndexProgress) => {
+      if (!progress || !progress.total) {
+        return;
+      }
+      if (progress.done >= progress.total) {
+        indexStatus.hide();
+        return;
+      }
+      indexStatus.text = `$(sync~spin) SysML indexing ${progress.done}/${progress.total}`;
+      indexStatus.tooltip = 'Indexing the standard library for cross-file resolution.';
+      indexStatus.show();
     });
   };
 

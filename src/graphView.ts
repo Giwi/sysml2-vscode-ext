@@ -1,29 +1,9 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import type { LanguageClient } from 'vscode-languageclient/node';
+import type { GraphData } from './shared/protocol';
 
-export interface GraphNode {
-  id: string;
-  label: string;
-  kind: string;
-  depth: number;
-  children: number;
-}
-
-export interface GraphEdge {
-  from: string;
-  to: string;
-  kind: string;
-  label: string;
-}
-
-export interface GraphData {
-  uri: string;
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  truncated: boolean;
-}
-
+/** Result of a webview image export, written to disk by the session. */
 export interface GraphExport {
   format: 'png' | 'svg';
   data: string;

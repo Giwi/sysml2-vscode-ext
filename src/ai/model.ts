@@ -83,11 +83,7 @@ export async function complete(
  * Extract the code to apply from a model answer. Models usually wrap the
  * document in a fence; when they do not, the trimmed answer is used as-is.
  */
-export function extractCode(answer: string, languageId: string): string {
-  const fence = new RegExp('```(?:' + languageId + '|sysml|kerml|uml)?\\s*\\n([\\s\\S]*?)```', 'i');
-  const match = fence.exec(answer);
-  return (match ? match[1] : answer).trim();
-}
+export { extractCode } from './code';
 
 /** Surface language model errors without a stack trace. */
 export function describeError(error: unknown): string {

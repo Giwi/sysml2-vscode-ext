@@ -1,0 +1,65 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { parseText } from '../src/server/parser.js';
+import { buildDocumentModel, flattenSymbols } from '../src/server/model.js';
+import { extractCode } from '../src/ai/code.js';
+import { formatText } from '../src/server/format.js';
+
+const demo = readFileSync('examples/demo/demo.sysml', 'utf8');
+const demoModel = buildDocumentModel('file:///demo.sysml', parseText(demo, false), false);
+const symbols = flattenSymbols(demoModel);
+
+test('format: re-indents by brace depth', () => {
+  const input = 'package P {\n        part def A {\npart x : Real;\n    }\n}\n';
+  const output = formatText(input, { insertSpaces: true, tabSize: 2 });
+  assert.equal(output, 'package P {\n  part def A {\n    part x : Real;\n  }\n}\n');
+});
+
+test('format: ignores braces in strings and comments', () => {
+  const input = 'package P {\npart s : String = "a } b"; // } comment\n/* } block */\n}\n';
+  const output = formatText(input, { insertSpaces: true, tabSize: 2 });
+  assert.match(output, /^package P \{\n  part s/m);
+  assert.match(output, /a \} b/);
+  assert.match(output, /\/\* \} block \*\//);
+});
+
+test('format: uses tabs when spaces are disabled', () => {
+  const input = 'package P {\npart x : Real;\n}\n';
+  const output = formatText(input, { insertSpaces: false, tabSize: 4 });
+  assert.equal(output, 'package P {\n\tpart x : Real;\n}\n');
+});
+
+test('format: collapses blank-line runs and keeps a single trailing newline', () => {
+  const input = 'package P {\n\n\n\npart x : Real;\n}\n\n\n';
+  const output = formatText(input, { insertSpaces: true, tabSize: 2 });
+  assert.equal(output, 'package P {\n\n  part x : Real;\n}\n');
+});
+
+test('model: extracts multiplicity and type', () => {
+  const wheel = symbols.find((symbol) => symbol.name === 'wheel');
+  assert.ok(wheel, 'wheel symbol exists');
+  assert.equal(wheel.multiplicity, '4');
+  assert.equal(wheel.refs.find((ref) => ref.kind === 'typing')?.text, 'Wheel');
+});
+
+test('model: records an explicit verify reference', () => {
+  const verification = symbols.find((symbol) => symbol.name === 'MassVerification');
+  assert.ok(verification, 'verification case exists');
+  const verify = verification.refs.find((ref) => ref.kind === 'verify');
+  assert.ok(verify, 'verify reference is explicit');
+  assert.equal(verify.text, 'VehicleRequirement');
+});
+
+test('model: symbol kinds are specialised, not generic', () => {
+  assert.equal(symbols.find((symbol) => symbol.name === 'Vehicle')?.kind, 'Part Definition');
+  assert.equal(symbols.find((symbol) => symbol.name === 'VehicleRequirement')?.kind, 'Requirement Definition');
+});
+
+test('ai: extracts a fenced code block and falls back to plain text', () => {
+  assert.equal(
+    extractCode('Here you go:\n```sysml\npackage P {}\n```\nDone.', 'sysml'),
+    'package P {}'
+  );
+  assert.equal(extractCode('package P {}', 'sysml'), 'package P {}');
+});

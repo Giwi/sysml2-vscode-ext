@@ -25,7 +25,9 @@ export type RefKind =
   | 'crosses'
   | 'import'
   | 'dependency'
-  | 'alias';
+  | 'alias'
+  | 'verify'
+  | 'satisfy';
 
 export interface ResolvedTarget {
   name: string;
@@ -472,6 +474,14 @@ export function buildDocumentModel(uri: string, parse: ParseResult, library: boo
         break;
       case 'ownedReferenceSubsetting':
         addRef(scope, 'subsets', firstQualifiedName(ctx));
+        break;
+      case 'requirementVerificationUsage':
+        // `verify X;` inside a verification case.
+        addRef(scope, 'verify', findDescendant(ctx, 'qualifiedName'));
+        break;
+      case 'satisfyRequirementUsage':
+        // `satisfy X;` inside an allocation or requirement usage.
+        addRef(scope, 'satisfy', findDescendant(ctx, 'qualifiedName'));
         break;
       case 'subsetting':
         addRef(scope, 'subsets', firstQualifiedName(ctx));
